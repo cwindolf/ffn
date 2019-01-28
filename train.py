@@ -374,12 +374,12 @@ def define_data_input(model, queue_batch=None):
   label_volume_map = {}
   for vol in FLAGS.label_volumes.split(','):
     volname, path, dataset = vol.split(':')
-    label_volume_map[volname] = h5py.File(path)[dataset]
+    label_volume_map[volname] = h5py.File(path, 'r')[dataset]
 
   image_volume_map = {}
   for vol in FLAGS.data_volumes.split(','):
     volname, path, dataset = vol.split(':')
-    image_volume_map[volname] = h5py.File(path)[dataset]
+    image_volume_map[volname] = h5py.File(path, 'r')[dataset]
 
   if queue_batch is None:
     queue_batch = FLAGS.batch_size
@@ -747,6 +747,15 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
 
 
 def get_cluster_spec():
+  '''
+  Convert the `{--ps_hosts,--worker_hosts}` flags into a definition of the
+  distributed cluster we're running on.
+
+  Returns:
+    None                  if these flags aren't present, which signals local
+                          training.
+    tf.train.ClusterSpec  describing the cluster otherwise
+  '''
   if not (FLAGS.ps_hosts or FLAGS.worker_hosts or FLAGS.ps_tasks):
     return None
   elif FLAGS.ps_hosts and FLAGS.worker_hosts and FLAGS.ps_tasks > 0:
