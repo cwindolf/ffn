@@ -102,6 +102,18 @@ flags.DEFINE_integer('replica_step_delay', 300,
 flags.DEFINE_integer('summary_rate_secs', 120,
                      'How often to save summaries (in seconds).')
 
+# Data parallel training options.
+# See also some of the training infra options above.
+flags.DEFINE_string('ps_hosts', '',
+                    'Parameter servers. Comma-separated list of '
+                    '<hostname>:<port> pairs.')
+flags.DEFINE_string('worker_hosts', '',
+                    'Worker servers. Comma-separated list of '
+                    '<hostname>:<port> pairs.')
+flags.DEFINE_string('job_name', 'worker',
+                    'One of "ps", "worker".')
+
+
 # FFN training options.
 flags.DEFINE_float('seed_pad', 0.05,
                    'Value to use for the unknown area of the seed.')
@@ -115,6 +127,9 @@ flags.DEFINE_enum('fov_policy', 'fixed', ['fixed', 'max_pred_moves'],
                   'maximum mask activation within a plane perpendicular to '
                   'one of the 6 Cartesian directions, offset by +/- '
                   'model.deltas from the current FOV position.')
+
+
+
 # TODO(mjanusz): Implement fov_moves > 1 for the 'fixed' policy.
 flags.DEFINE_integer('fov_moves', 1,
                      'Number of FOV moves by "model.delta" voxels to execute '
@@ -612,104 +627,139 @@ def save_flags():
           f.write('%s\n' % flag.serialize())
 
 
-def train_ffn(model_cls, **model_kwargs):
-  with tf.Graph().as_default():
-    with tf.device(tf.train.replica_device_setter(FLAGS.ps_tasks, merge_devices=True)):
-      # The constructor might define TF ops/placeholders, so it is important
-      # that the FFN is instantiated within the current context.
-      model = model_cls(**model_kwargs)
-      eval_shape_zyx = train_eval_size(model).tolist()[::-1]
+def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
+  # Distributed or local training server
+  if cluster_spec:
+    server = tf.train.Server(cluster_spec,
+                             job_name=FLAGS.job_name,
+                             task_index=FLAGS.task)
+  else:
+    server = tf.train.Server.create_local_server()
 
-      eval_tracker = EvalTracker(eval_shape_zyx)
-      load_data_ops = define_data_input(model, queue_batch=1)
-      prepare_ffn(model)
-      merge_summaries_op = tf.summary.merge_all()
+  if FLAGS.job_name == 'ps':
+    # Parameter servers wait for instructions
+    logging.info('Starting parameter server.')
+    server.join()
+  elif FLAGS.job_name == 'worker':
+    # Workers get to work.
+    # `job_name=='worker'` by default, so this path is hit when not distributed
+    logging.info('Starting worker.')
+    with tf.Graph().as_default():
+      with tf.device(tf.train.replica_device_setter(
+          ps_tasks=FLAGS.ps_tasks,
+          cluster=cluster_spec,
+          merge_devices=True)):
+        # The constructor might define TF ops/placeholders, so it is important
+        # that the FFN is instantiated within the current context.
+        model = model_cls(**model_kwargs)
+        eval_shape_zyx = train_eval_size(model).tolist()[::-1]
 
-      if FLAGS.task == 0:
-        save_flags()
+        eval_tracker = EvalTracker(eval_shape_zyx)
+        load_data_ops = define_data_input(model, queue_batch=1)
+        prepare_ffn(model)
+        merge_summaries_op = tf.summary.merge_all()
 
-      summary_writer = None
-      saver = tf.train.Saver(keep_checkpoint_every_n_hours=0.25)
-      scaffold = tf.train.Scaffold(saver=saver)
-      with tf.train.MonitoredTrainingSession(
-          master=FLAGS.master,
-          is_chief=(FLAGS.task == 0),
-          save_summaries_steps=None,
-          save_checkpoint_secs=300,
-          config=tf.ConfigProto(
-              log_device_placement=False, allow_soft_placement=True),
-          checkpoint_dir=FLAGS.train_dir,
-          scaffold=scaffold) as sess:
+        if FLAGS.task == 0:
+          save_flags()
 
-        eval_tracker.sess = sess
-        step = int(sess.run(model.global_step))
+        summary_writer = None
+        saver = tf.train.Saver(keep_checkpoint_every_n_hours=0.25)
+        scaffold = tf.train.Scaffold(saver=saver)
+        with tf.train.MonitoredTrainingSession(
+            master=server.target,
+            is_chief=(FLAGS.task == 0),
+            save_summaries_steps=None,
+            save_checkpoint_secs=300,
+            config=tf.ConfigProto(
+                log_device_placement=False, allow_soft_placement=True),
+            checkpoint_dir=FLAGS.train_dir,
+            scaffold=scaffold) as sess:
 
-        if FLAGS.task > 0:
-          # To avoid early instabilities when using multiple replicas, we use
-          # a launch schedule where new replicas are brought online gradually.
-          logging.info('Delaying replica start.')
-          while step < FLAGS.replica_step_delay * FLAGS.task:
-            time.sleep(5.0)
-            step = int(sess.run(model.global_step))
-        else:
-          summary_writer = tf.summary.FileWriterCache.get(FLAGS.train_dir)
-          summary_writer.add_session_log(
-              tf.summary.SessionLog(status=tf.summary.SessionLog.START), step)
+          eval_tracker.sess = sess
+          step = int(sess.run(model.global_step))
 
-        fov_shifts = list(model.shifts)  # x, y, z
-        if FLAGS.shuffle_moves:
-          random.shuffle(fov_shifts)
-
-        policy_map = {
-            'fixed': partial(fixed_offsets, fov_shifts=fov_shifts),
-            'max_pred_moves': max_pred_offsets
-        }
-        batch_it = get_batch(lambda: sess.run(load_data_ops),
-                             eval_tracker, model, FLAGS.batch_size,
-                             policy_map[FLAGS.fov_policy])
-
-        t_last = time.time()
-
-        while not sess.should_stop() and step < FLAGS.max_steps:
-          # Run summaries periodically.
-          t_curr = time.time()
-          if t_curr - t_last > FLAGS.summary_rate_secs and FLAGS.task == 0:
-            summ_op = merge_summaries_op
-            t_last = t_curr
+          if FLAGS.task > 0:
+            # To avoid early instabilities when using multiple replicas, we use
+            # a launch schedule where new replicas are brought online gradually.
+            logging.info('Delaying replica start.')
+            while step < FLAGS.replica_step_delay * FLAGS.task:
+              time.sleep(5.0)
+              step = int(sess.run(model.global_step))
           else:
-            summ_op = None
+            summary_writer = tf.summary.FileWriterCache.get(FLAGS.train_dir)
+            summary_writer.add_session_log(
+                tf.summary.SessionLog(status=tf.summary.SessionLog.START), step)
 
-          seed, patches, labels, weights = next(batch_it)
+          fov_shifts = list(model.shifts)  # x, y, z
+          if FLAGS.shuffle_moves:
+            random.shuffle(fov_shifts)
 
-          updated_seed, step, summ = run_training_step(
-              sess, model, summ_op,
-              feed_dict={
-                  model.loss_weights: weights,
-                  model.labels: labels,
-                  model.input_patches: patches,
-                  model.input_seed: seed,
-              })
+          policy_map = {
+              'fixed': partial(fixed_offsets, fov_shifts=fov_shifts),
+              'max_pred_moves': max_pred_offsets
+          }
+          batch_it = get_batch(lambda: sess.run(load_data_ops),
+                               eval_tracker, model, FLAGS.batch_size,
+                               policy_map[FLAGS.fov_policy])
 
-          # Save prediction results in the original seed array so that
-          # they can be used in subsequent steps.
-          mask.update_at(seed, (0, 0, 0), updated_seed)
+          t_last = time.time()
 
-          # Record summaries.
-          if summ is not None:
-            logging.info('Saving summaries.')
-            summ = tf.Summary.FromString(summ)
+          while not sess.should_stop() and step < FLAGS.max_steps:
+            # Run summaries periodically.
+            t_curr = time.time()
+            if t_curr - t_last > FLAGS.summary_rate_secs and FLAGS.task == 0:
+              summ_op = merge_summaries_op
+              t_last = t_curr
+            else:
+              summ_op = None
 
-            # Compute a loss over the whole training patch (i.e. more than a
-            # single-step field of view of the network). This quantifies the
-            # quality of the final object mask.
-            summ.value.extend(eval_tracker.get_summaries())
-            eval_tracker.reset()
+            seed, patches, labels, weights = next(batch_it)
 
-            assert summary_writer is not None
-            summary_writer.add_summary(summ, step)
+            updated_seed, step, summ = run_training_step(
+                sess, model, summ_op,
+                feed_dict={
+                    model.loss_weights: weights,
+                    model.labels: labels,
+                    model.input_patches: patches,
+                    model.input_seed: seed,
+                })
 
-      if summary_writer is not None:
-        summary_writer.flush()
+            # Save prediction results in the original seed array so that
+            # they can be used in subsequent steps.
+            mask.update_at(seed, (0, 0, 0), updated_seed)
+
+            # Record summaries.
+            if summ is not None:
+              logging.info('Saving summaries.')
+              summ = tf.Summary.FromString(summ)
+
+              # Compute a loss over the whole training patch (i.e. more than a
+              # single-step field of view of the network). This quantifies the
+              # quality of the final object mask.
+              summ.value.extend(eval_tracker.get_summaries())
+              eval_tracker.reset()
+
+              assert summary_writer is not None
+              summary_writer.add_summary(summ, step)
+
+        if summary_writer is not None:
+          summary_writer.flush()
+
+
+def get_cluster_spec():
+  if not (FLAGS.ps_hosts or FLAGS.worker_hosts or FLAGS.ps_tasks):
+    return None
+  elif FLAGS.ps_hosts and FLAGS.worker_hosts and FLAGS.ps_tasks > 0:
+    ps_hosts = [s.strip() for s in FLAGS.ps_hosts.split(',')]
+    worker_hosts = [s.strip() for s in FLAGS.worker_hosts.split(',')]
+    cluster_spec = tf.train.ClusterSpec({
+        'ps': ps_hosts,
+        'worker': worker_hosts,
+      })
+    return cluster_spec
+  else:
+    raise InvalidArgumentError(
+      'Set either all or none of --ps_hosts, --worker_hosts, --ps_tasks')
 
 
 def main(argv=()):
@@ -721,7 +771,9 @@ def main(argv=()):
   logging.info('Random seed: %r', seed)
   random.seed(seed)
 
-  train_ffn(model_class, batch_size=FLAGS.batch_size,
+  train_ffn(model_class, 
+            cluster_spec=get_cluster_spec(),
+            batch_size=FLAGS.batch_size,
             **json.loads(FLAGS.model_args))
 
 
