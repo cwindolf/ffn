@@ -1,0 +1,19 @@
+image {
+  hdf5: "/mnt/home/cwindolf/data/2941_7380_2836_300.h5:raw"
+}
+image_mean: 128
+image_stddev: 33
+checkpoint_interval: 1800
+seed_policy: "PolicyPeaks"
+model_checkpoint_path: "/mnt/home/pgunn/data/trained_networks/michal-117879676/model.ckpt-117879676"
+model_name: "convstack_3d.ConvStack3DFFNModel"
+model_args: "{\"depth\": 12, \"fov_size\": [33, 33, 33], \"deltas\": [8, 8, 8]}"
+segmentation_output_dir: "results/fib25/secondrun"
+inference_options {
+  init_activation: 0.95
+  pad_value: 0.05
+  move_threshold: 0.9
+  min_boundary_dist { x: 1 y: 1 z: 1 }
+  segment_threshold: 0.6
+  min_segment_size: 1000
+}
