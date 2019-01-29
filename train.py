@@ -627,6 +627,17 @@ def save_flags():
           f.write('%s\n' % flag.serialize())
 
 
+# for done queue reference, see:
+# - https://github.com/tensorflow/tensorflow/issues/4713
+# - https://gist.github.com/yaroslavvb/ea1b1bae0a75c4aae593df7eca72d9ca
+def create_done_queue(i):
+  with tf.device("/job:ps/task:%d" % (i)):
+    return tf.FIFOQueue(len(FLAGS.worker_hosts.split(',')),
+      tf.int32, shared_name="done_queue"+str(i))
+def create_done_queues():
+  return [create_done_queue(i) for i in range(FLAGS.ps_tasks)]
+
+
 def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
   # Distributed or local training server
   if cluster_spec:
@@ -636,15 +647,38 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
   else:
     server = tf.train.Server.create_local_server()
 
+
   if FLAGS.job_name == 'ps':
     # Parameter servers wait for instructions
     logging.info('Starting parameter server.')
-    server.join()
+    queue = create_done_queue(FLAGS.task)
+    sess = tf.Session(server.target,
+      config=tf.ConfigProto(
+        log_device_placement=False,
+        allow_soft_placement=True))
+    for i in range(len(FLAGS.worker_hosts.split(','))):
+      sess.run(queue.dequeue())
+      logging.info('PS' + str(FLAGS.task) + ' got quit sig number ' + str(i))
+    logging.info('PS' + str(FLAGS.task) + ' exiting.')
+    time.sleep(1.0)
+    time.sleep(1.0)
+    # For some reason the sess.close is hanging, this hard kill is the only
+    # way I can find to exit.
+    os._exit(0)
+
   elif FLAGS.job_name == 'worker':
     # Workers get to work.
     # `job_name=='worker'` by default, so this path is hit when not distributed
     logging.info('Starting worker.')
+
     with tf.Graph().as_default():
+      # This is how we tell the parameter servers we're finished.
+      done_ops = []
+      with tf.device('/job:worker/task:%d' % FLAGS.task):
+        done_ops = ([q.enqueue(1) for q in create_done_queues()]
+            + [tf.print(tf.constant(0), [],
+                message=('Worker %d signaling parameter servers' % FLAGS.task))])
+
       with tf.device(tf.train.replica_device_setter(
           ps_tasks=FLAGS.ps_tasks,
           cluster=cluster_spec,
@@ -671,9 +705,12 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
             save_summaries_steps=None,
             save_checkpoint_secs=300,
             config=tf.ConfigProto(
-                log_device_placement=False, allow_soft_placement=True),
+              log_device_placement=False,
+              allow_soft_placement=True,
+              device_filters=['/job:ps', '/job:worker/task:%d' % FLAGS.task]),
             checkpoint_dir=FLAGS.train_dir,
-            scaffold=scaffold) as sess:
+            scaffold=scaffold,
+            hooks=[tf.train.FinalOpsHook(done_ops)]) as sess:
 
           eval_tracker.sess = sess
           step = int(sess.run(model.global_step))
@@ -681,10 +718,11 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
           if FLAGS.task > 0:
             # To avoid early instabilities when using multiple replicas, we use
             # a launch schedule where new replicas are brought online gradually.
-            logging.info('Delaying replica start.')
-            while step < FLAGS.replica_step_delay * FLAGS.task:
-              time.sleep(5.0)
-              step = int(sess.run(model.global_step))
+            # logging.info('Delaying replica start.')
+            # while step < FLAGS.replica_step_delay * FLAGS.task:
+            #   time.sleep(5.0)
+            #   step = int(sess.run(model.global_step))
+            pass
           else:
             summary_writer = tf.summary.FileWriterCache.get(FLAGS.train_dir)
             summary_writer.add_session_log(
@@ -708,6 +746,7 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
             # Run summaries periodically.
             t_curr = time.time()
             if t_curr - t_last > FLAGS.summary_rate_secs and FLAGS.task == 0:
+              logging.info('Saving summaries at step ' + str(step))
               summ_op = merge_summaries_op
               t_last = t_curr
             else:
@@ -744,6 +783,7 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
 
         if summary_writer is not None:
           summary_writer.flush()
+
 
 
 def get_cluster_spec():
