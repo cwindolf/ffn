@@ -12,10 +12,14 @@ if __name__ == '__main__':
 
     ap = argparse.ArgumentParser(__doc__)
 
-    ap.add_argument('num_nodes', type=str,
-                    help='Number of training nodes.')
+    ap.add_argument('num_nodes', type=int,
+                    help='Number of nodes to allocate for this computation')
+    ap.add_argument('--num_ps', type=int, default=0,
+                    help='How many nodes should run a parameter server? '
+                         'If unset, every node will run one.')
     ap.add_argument('--ps_port', type=str, default='2223',
                     help='Port for parameter servers')
+    ap.add_argument('--no_gpu_for_ps', action='store_true')
     ap.add_argument('--worker_port', type=str, default='2222',
                     help='Port for workers')
     ap.add_argument('--exclude', type=str, default='workergpu[00-02]',
@@ -42,6 +46,12 @@ if __name__ == '__main__':
 
     args = ap.parse_args()
 
+    if args.num_ps <= 0 or args.num_ps > args.num_nodes:
+        num_ps = str(args.num_nodes)
+    else:
+        num_ps = str(args.num_ps)
+
+
     # *********************************************************************** #
     # Run the job
 
@@ -56,7 +66,7 @@ if __name__ == '__main__':
 
     res = subprocess.run(['srun',
             # srun args
-            '--nodes', args.num_nodes,
+            '--nodes', str(args.num_nodes),
             '--output', os.path.join(args.log_dir, 'ffn_%N_%j.out'),
             '--error', os.path.join(args.log_dir, 'ffn_%N_%j.err'),
             '-p', 'gpu',
@@ -66,6 +76,7 @@ if __name__ == '__main__':
 
             # trainer script and its args
             'python', './slurm/slurm_node.py',
+            '--ps_tasks', num_ps,
             '--train_dir', args.train_dir,
             '--train_coords', args.train_coords,
             '--data_volumes', args.data_volumes,
@@ -77,7 +88,8 @@ if __name__ == '__main__':
             '--ps_port', args.ps_port,
             '--worker_port', args.worker_port,
             '--batch_size', args.batch_size,
-            '--max_steps', args.max_steps])
+            '--max_steps', args.max_steps]
+            + (['--no_gpu_for_ps'] if args.no_gpu_for_ps else []))
 
     print('bye')
     print('srun ran with return code', res.returncode)
