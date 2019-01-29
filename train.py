@@ -813,10 +813,11 @@ def get_cluster_spec():
 
 def main(argv=()):
   del argv  # Unused.
+
   model_class = import_symbol(FLAGS.model_name)
   # Multiply the task number by a value large enough that tasks starting at a
   # similar time cannot end up with the same seed.
-  seed = int(time.time() + FLAGS.task * 3600 * 24)
+  seed = int(time.time() * 1000 + FLAGS.task * 3600 * 24)
   logging.info('Random seed: %r', seed)
   random.seed(seed)
 
