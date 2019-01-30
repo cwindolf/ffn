@@ -31,9 +31,10 @@ if __name__ == '__main__':
                     help='How many parameter servers?')
     ap.add_argument('--ps_port', type=str, default='2223',
                     help='Port for parameter servers')
-    ap.add_argument('--no_gpu_for_ps', action='store_true')
     ap.add_argument('--worker_port', type=str, default='2222',
                     help='Port for workers')
+    ap.add_argument('--worker_port_b', type=str, default='2224',
+                    help='Second port for workers')
     ap.add_argument('--max_steps', type=str, default='10000')
     ap.add_argument('--batch_size', type=str, default='4')
 
@@ -57,7 +58,6 @@ if __name__ == '__main__':
     num_nodes = len(hostnames)
     assert num_nodes >= args.ps_tasks
     node_idx = hostnames.index(me)
-    worker_tasks = num_nodes + num_nodes - args.ps_tasks
     ps_hostnames = hostnames[:args.ps_tasks]
 
     # Will there be a ps on this node, or just a worker?
@@ -65,23 +65,24 @@ if __name__ == '__main__':
 
     # The args themselves
     task = str(node_idx)
+    b_task = str(node_idx + num_nodes)
     ps_hosts = ','.join(host + ':' + args.ps_port for host in ps_hostnames)
     worker_hosts = ','.join(host + ':' + args.worker_port for host in hostnames)
+    worker_hosts += ','
+    worker_hosts += ','.join(host + ':' + args.worker_port_b for host in hostnames)
 
 
     # *********************************************************************** #
     # Launch processes
 
-    print('Node', node_idx, 'of', num_nodes, 'launching worker'
+    print('Node', node_idx, 'of', num_nodes, 'launching workers'
           + ('and a ps' if run_ps else ''))
 
-    # Worker
-    worker_env = os.environ.copy()
-    if run_ps and not args.no_gpu_for_ps:
-        worker_env['CUDA_VISIBLE_DEVICES'] = '0'
-    # else worker takes all gpus
+    # Worker A
+    worker_a_env = os.environ.copy()
+    worker_a_env['CUDA_VISIBLE_DEVICES'] = '0'
 
-    worker_proc = subprocess.Popen(['python', 'train.py',
+    worker_a_proc = subprocess.Popen(['python', 'train.py',
             # The usual training args
             '--train_dir', args.train_dir,
             '--train_coords', args.train_coords,
@@ -101,16 +102,40 @@ if __name__ == '__main__':
             '--ps_tasks', str(args.ps_tasks),
             '--ps_hosts', ps_hosts,
             '--worker_hosts', worker_hosts],
-        env=worker_env)
+        env=worker_a_env)
+
+
+    # Worker B
+    worker_b_env = os.environ.copy()
+    worker_b_env['CUDA_VISIBLE_DEVICES'] = '1'
+
+    worker_b_proc = subprocess.Popen(['python', 'train.py',
+            # The usual training args
+            '--train_dir', args.train_dir,
+            '--train_coords', args.train_coords,
+            '--train_dir', args.train_dir,
+            '--data_volumes', args.data_volumes,
+            '--label_volumes', args.label_volumes,
+            '--model_name', args.model_name,
+            '--model_args', args.model_args,
+            '--image_mean', args.image_mean,
+            '--image_stddev', args.image_stddev,
+            '--max_steps', args.max_steps,
+            '--batch_size', args.batch_size,
+
+            # Cluster config
+            '--job_name', 'worker', # !
+            '--task', b_task,
+            '--ps_tasks', str(args.ps_tasks),
+            '--ps_hosts', ps_hosts,
+            '--worker_hosts', worker_hosts],
+        env=worker_b_env)
 
 
     # Parameter server
     if run_ps:
         ps_env = os.environ.copy()
-        if args.no_gpu_for_ps:
-            ps_env['CUDA_VISIBLE_DEVICES'] = ''
-        else:
-            ps_env['CUDA_VISIBLE_DEVICES'] = '1'
+        ps_env['CUDA_VISIBLE_DEVICES'] = ''
 
         ps_proc = subprocess.Popen(['python', 'train.py',
                 # The usual training args
@@ -137,11 +162,17 @@ if __name__ == '__main__':
     # *********************************************************************** #
     # Wait for join
 
+    for _ in range(50):
+        time.sleep(1.0)
+        subprocess.run(['nvidia-smi'])
+
     # Res of communicate should be (None, None)
     # communicate waits until the process finishes so this is one way to hang
     # around til then.
-    print('Joining worker:', worker_proc.communicate())
-    print(worker_proc)
+    print('Joining worker A:', worker_a_proc.communicate())
+    print('Joining worker B:', worker_b_proc.communicate())
+    print(worker_a_proc)
+    print(worker_b_proc)
     if run_ps:
         print('Joining ps:', ps_proc.communicate())
         print(ps_proc)

@@ -19,7 +19,6 @@ if __name__ == '__main__':
                          'If unset, every node will run one.')
     ap.add_argument('--ps_port', type=str, default='2223',
                     help='Port for parameter servers')
-    ap.add_argument('--no_gpu_for_ps', action='store_true')
     ap.add_argument('--worker_port', type=str, default='2222',
                     help='Port for workers')
     ap.add_argument('--exclude', type=str, default='workergpu[00-02]',
@@ -46,6 +45,7 @@ if __name__ == '__main__':
 
     args = ap.parse_args()
 
+    # Default number of parameter servers
     if args.num_ps <= 0 or args.num_ps > args.num_nodes:
         num_ps = str(args.num_nodes)
     else:
@@ -88,8 +88,7 @@ if __name__ == '__main__':
             '--ps_port', args.ps_port,
             '--worker_port', args.worker_port,
             '--batch_size', args.batch_size,
-            '--max_steps', args.max_steps]
-            + (['--no_gpu_for_ps'] if args.no_gpu_for_ps else []))
+            '--max_steps', args.max_steps])
 
     print('bye')
     print('srun ran with return code', res.returncode)
