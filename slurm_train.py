@@ -96,4 +96,11 @@ def main(argv):
 
 
 if __name__ == '__main__':
+    # These flags are required in train.py, so let's bail now rather than
+    # allocating a node and then bailing.
+    flags.mark_flag_as_required('train_coords')
+    flags.mark_flag_as_required('data_volumes')
+    flags.mark_flag_as_required('label_volumes')
+    flags.mark_flag_as_required('model_name')
+    flags.mark_flag_as_required('model_args')
     app.run(main)
