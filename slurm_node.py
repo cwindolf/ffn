@@ -68,6 +68,9 @@ def launch_procs(task, b_task, worker_hosts, ps_hosts, run_ps):
     Launch two workers (one for each gpu -- edit this if different machines
     become available), and a parameter server if `run_ps`.
 
+    task, b_task, worker_hosts, ps_hosts
+        all strings. will be used as command line args.
+
     run_ps      bool
     '''
     # If any training arguments are set, we want to send them to `train.py`
