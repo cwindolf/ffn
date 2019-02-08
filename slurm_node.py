@@ -103,7 +103,7 @@ def launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts,
                        if f.present]
 
     worker_procs = []
-    for worker_task, gpu_idx in zip(worker_tasks, reversed(worker_gpu_inds)):
+    for worker_task, gpu_idx in zip(worker_tasks, worker_gpu_inds):
         worker_env = os.environ.copy()
         worker_env['CUDA_VISIBLE_DEVICES'] = str(gpu_idx)
 
