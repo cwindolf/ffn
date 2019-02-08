@@ -22,12 +22,13 @@ from ffn.training import training_flags
 
 flags.DEFINE_integer('ps_tasks', 1,
                      'How many parameter servers?')
-flags.DEFINE_string('ps_port', '2224',
+flags.DEFINE_integer('ps_port', 2220,
                     'Port for parameter servers')
-flags.DEFINE_string('worker_a_port', '2222',
-                    'Port for workers')
-flags.DEFINE_string('worker_b_port', '2223',
-                    'Second port for workers')
+flags.DEFINE_integer('worker_port_min', 2221,
+                    'Low port for workers. Workers task i allocates port '
+                    'worker_port_min+i. On a machine with 4 gpus, ports '
+                    'min,min+1,min+2,min+3 will be allocated for workers.')
+flags.DEFINE_string('node_log_dir', '', 'This script logs here.')
 
 FLAGS = flags.FLAGS
 
@@ -46,6 +47,15 @@ def build_cluster_args():
     # `$SLURMD_NODENAME` is the name of the host we're running on
     me = os.environ['SLURMD_NODENAME']
 
+    # Figure out how many GPUs each host has
+    n_gpus = []
+    for host in hostnames:
+        gpus_res = subprocess.run(['nvidia-smi', '-L'],
+            stdout=subprocess.PIPE)
+        assert gpus_res.returncode == 0
+        # Subtract 1 for trailing newline
+        n_gpus.append(len(gpus_res.stdout.decode().split('\n')) - 1)
+
     # Figure out which nodes will be running parameter servers
     num_nodes = len(hostnames)
     assert num_nodes >= FLAGS.ps_tasks
@@ -53,64 +63,49 @@ def build_cluster_args():
     ps_hostnames = hostnames[:FLAGS.ps_tasks]
 
     # The args themselves
-    task = str(node_idx)
-    b_task = str(node_idx + num_nodes)
-    ps_hosts = ','.join(host + ':' + FLAGS.ps_port for host in ps_hostnames)
-    worker_hosts = ','.join(host + ':' + FLAGS.worker_a_port for host in hostnames)
-    worker_hosts += ','
-    worker_hosts += ','.join(host + ':' + FLAGS.worker_b_port for host in hostnames)
+    ps_task = str(node_idx)
+    ps_hosts = ','.join(host + ':' + str(FLAGS.ps_port) for host in ps_hostnames)
 
-    return task, b_task, ps_hosts, worker_hosts, node_idx, num_nodes
+    # A worker per gpu per host.
+    # A worker needs to know its hostname:port, the index of its gpu, and its task number.
+    worker_hosts = []
+    worker_tasks = []
+    worker_gpu_inds = []
+    cur_task = 0
+
+    while sum(n_gpus):
+        for i in range(num_nodes):
+            if n_gpus[i] > 0:
+                gpu_i = n_gpus[i] - 1
+                h = hostnames[i] + ':' + str(FLAGS.worker_port_min + gpu_i)
+                worker_hosts.append(h)
+
+                if i == node_idx:
+                    worker_gpu_inds.append(gpu_i)
+                    worker_tasks.append(cur_task)
+
+                n_gpus[i] -= 1
+            cur_task += 1
+
+    worker_hosts = ','.join(worker_hosts)
+    worker_tasks = [str(t) for t in worker_tasks]
+    worker_gpu_inds = [str(t) for t in worker_gpu_inds]
+
+    return ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts, node_idx, num_nodes
 
 
-def launch_procs(task, b_task, worker_hosts, ps_hosts, run_ps):
+def launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts, run_ps):
     '''
-    Launch two workers (one for each gpu -- edit this if different machines
-    become available), and a parameter server if `run_ps`.
-
-    task, b_task, worker_hosts, ps_hosts
-        all strings. will be used as command line args.
-
-    run_ps      bool
+    Launch one worker for each GPU, and a parameter server if `run_ps`.
     '''
     # If any training arguments are set, we want to send them to `train.py`
     module_dict = FLAGS.flags_by_module_dict()
-    train_flags = [f.serialize() 
+    train_flags = [f.serialize()
                    for f in module_dict['ffn.training.training_flags']
                    if f.present]
-    optimizer_flags = [f.serialize() 
+    optimizer_flags = [f.serialize()
                        for f in module_dict['ffn.training.optimizer']
                        if f.present]
-
-    # Worker A
-    worker_a_env = os.environ.copy()
-    worker_a_env['CUDA_VISIBLE_DEVICES'] = '0'
-
-    worker_a_proc = subprocess.Popen(['python', 'train.py',
-            # Cluster config
-            '--job_name', 'worker', # !
-            '--task', task,
-            '--ps_tasks', str(FLAGS.ps_tasks),
-            '--ps_hosts', ps_hosts,
-            '--worker_hosts', worker_hosts]
-            + train_flags + optimizer_flags,
-        env=worker_a_env)
-
-
-    # Worker B
-    worker_b_env = os.environ.copy()
-    worker_b_env['CUDA_VISIBLE_DEVICES'] = '1'
-
-    worker_b_proc = subprocess.Popen(['python', 'train.py',
-            # Cluster config
-            '--job_name', 'worker', # !
-            '--task', b_task,
-            '--ps_tasks', str(FLAGS.ps_tasks),
-            '--ps_hosts', ps_hosts,
-            '--worker_hosts', worker_hosts]
-            + train_flags + optimizer_flags,
-        env=worker_b_env)
-
 
     # Parameter server
     if run_ps:
@@ -120,26 +115,42 @@ def launch_procs(task, b_task, worker_hosts, ps_hosts, run_ps):
         ps_proc = subprocess.Popen(['python', 'train.py',
                 # Cluster config
                 '--job_name', 'ps', # !
-                '--task', task,
+                '--task', ps_task,
                 '--ps_tasks', str(FLAGS.ps_tasks),
                 '--ps_hosts', ps_hosts,
                 '--worker_hosts', worker_hosts]
                 + train_flags + optimizer_flags,
             env=ps_env)
 
-    return [worker_a_proc, worker_b_proc] + ([ps_proc] if run_ps else [])
+
+    worker_procs = []
+    for worker_task, gpu_idx in zip(worker_tasks, worker_gpu_inds):
+        worker_env = os.environ.copy()
+        worker_env['CUDA_VISIBLE_DEVICES'] = gpu_idx
+
+        worker_proc = subprocess.Popen(['python', 'train.py',
+                # Cluster config
+                '--job_name', 'worker', # !
+                '--task', worker_task,
+                '--ps_tasks', str(FLAGS.ps_tasks),
+                '--ps_hosts', ps_hosts,
+                '--worker_hosts', worker_hosts]
+                + train_flags + optimizer_flags,
+            env=worker_env)
+
+        worker_procs.append(worker_proc)
+
+    return worker_procs + ([ps_proc] if run_ps else [])
 
 
 def main(_):
     # See what nodes we are running on
-    (task, b_task, ps_hosts,
-     worker_hosts, node_idx, num_nodes) = build_cluster_args()
+    (ps_task, worker_tasks, worker_gpu_inds, ps_hosts,
+        worker_hosts, node_idx, num_nodes) = build_cluster_args()
     run_ps = node_idx < FLAGS.ps_tasks
 
     # Launch training processes
-    print('Node', node_idx, 'of', num_nodes, 'launching workers'
-      + ('and a ps' if run_ps else ''))
-    procs = launch_procs(task, b_task, worker_hosts, ps_hosts, run_ps)
+    procs = launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts, run_ps)
 
     # Wait for join and log GPU usage
     while None in [proc.poll() for proc in procs]:
@@ -150,9 +161,6 @@ def main(_):
     for proc in procs:
         print(proc, proc.communicate())
 
-    print('Node', node_idx, 'finished.')
-
 
 if __name__ == '__main__':
     app.run(main)
-   

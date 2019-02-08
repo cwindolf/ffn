@@ -24,12 +24,10 @@ flags.DEFINE_integer('num_nodes', 1,
 flags.DEFINE_integer('num_ps', 0,
                      'How many nodes should run a parameter server? '
                      'If unset, every node will run one.')
-flags.DEFINE_string('ps_port', '2224',
+flags.DEFINE_string('ps_port', '2220',
                     'Port for parameter servers')
-flags.DEFINE_string('worker_a_port', '2222',
+flags.DEFINE_string('worker_port_min', '2221',
                     'Port for first worker on each node')
-flags.DEFINE_string('worker_b_port', '2223',
-                    'Port for second worker')
 flags.DEFINE_string('exclude', 'workergpu[00-02]',
                     'Slurm hostname list of machines to avoid')
 flags.DEFINE_string('slurm_log_dir', 'logs/',
@@ -51,10 +49,10 @@ def main(argv):
     # We want to pass the optimizer flags and the training flags to
     # `slurm_node.py`. So let's serialize those.
     module_dict = FLAGS.flags_by_module_dict()
-    train_flags = [f.serialize() 
+    train_flags = [f.serialize()
                    for f in module_dict['ffn.training.training_flags']
                    if f.present]
-    optimizer_flags = [f.serialize() 
+    optimizer_flags = [f.serialize()
                        for f in module_dict['ffn.training.optimizer']
                        if f.present]
 
@@ -87,8 +85,8 @@ def main(argv):
             'python', 'slurm_node.py',
             '--ps_tasks', num_ps,
             '--ps_port', FLAGS.ps_port,
-            '--worker_a_port', FLAGS.worker_a_port,
-            '--worker_b_port', FLAGS.worker_b_port]
+            '--worker_port_min', FLAGS.worker_port_min,
+            '--node_log_dir', os.path.join(FLAGS.slurm_log_dir)]
             + train_flags + optimizer_flags)
 
     print('srun ran with return code', res.returncode)
