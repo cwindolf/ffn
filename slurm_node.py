@@ -73,23 +73,32 @@ def build_cluster_args():
     worker_gpu_inds = []
     cur_task = 0
 
-    while sum(n_gpus):
-        for i in range(num_nodes):
-            if n_gpus[i] > 0:
-                gpu_i = n_gpus[i] - 1
-                h = hostnames[i] + ':' + str(FLAGS.worker_port_min + gpu_i)
-                worker_hosts.append(h)
+    for h, gpus in zip(hostnames, n_gpus):
+        for i in range(gpus):
+            host_and_port = h + ':' + str(FLAGS.worker_port_min + i)
+            worker_hosts.append(host_and_port)
 
-                if i == node_idx:
-                    worker_gpu_inds.append(gpu_i)
-                    worker_tasks.append(cur_task)
+            if h == me:
+                worker_gpu_inds.append(i)
+                worker_tasks.append(cur_task)
 
-                n_gpus[i] -= 1
             cur_task += 1
 
+    # while sum(n_gpus):
+    #     for i in range(num_nodes):
+    #         if n_gpus[i] > 0:
+    #             gpu_i = n_gpus[i] - 1
+    #             h = hostnames[i] + ':' + str(FLAGS.worker_port_min + gpu_i)
+    #             worker_hosts.append(h)
+
+    #             if i == node_idx:
+    #                 worker_gpu_inds.append(gpu_i)
+    #                 worker_tasks.append(cur_task)
+
+    #             n_gpus[i] -= 1
+    #         cur_task += 1
+
     worker_hosts = ','.join(worker_hosts)
-    worker_tasks = [str(t) for t in worker_tasks]
-    worker_gpu_inds = [str(t) for t in worker_gpu_inds]
 
     return ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts, node_idx, num_nodes
 
@@ -107,10 +116,27 @@ def launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts,
                        for f in module_dict['ffn.training.optimizer']
                        if f.present]
 
+    worker_procs = []
+    for worker_task, gpu_idx in zip(worker_tasks, reversed(worker_gpu_inds)):
+        worker_env = os.environ.copy()
+        worker_env['CUDA_VISIBLE_DEVICES'] = str(gpu_idx)
+
+        worker_proc = subprocess.Popen(['python', 'train.py',
+                # Cluster config
+                '--job_name', 'worker', # !
+                '--task', str(worker_task),
+                '--ps_tasks', str(FLAGS.ps_tasks),
+                '--ps_hosts', ps_hosts,
+                '--worker_hosts', worker_hosts]
+                + train_flags + optimizer_flags,
+            env=worker_env)
+
+        worker_procs.append(worker_proc)
+
     # Parameter server
     if run_ps:
         ps_env = os.environ.copy()
-        ps_env['CUDA_VISIBLE_DEVICES'] = ''
+        ps_env['CUDA_VISIBLE_DEVICES'] = '-1'
 
         ps_proc = subprocess.Popen(['python', 'train.py',
                 # Cluster config
@@ -121,24 +147,6 @@ def launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts,
                 '--worker_hosts', worker_hosts]
                 + train_flags + optimizer_flags,
             env=ps_env)
-
-
-    worker_procs = []
-    for worker_task, gpu_idx in zip(worker_tasks, worker_gpu_inds):
-        worker_env = os.environ.copy()
-        worker_env['CUDA_VISIBLE_DEVICES'] = gpu_idx
-
-        worker_proc = subprocess.Popen(['python', 'train.py',
-                # Cluster config
-                '--job_name', 'worker', # !
-                '--task', worker_task,
-                '--ps_tasks', str(FLAGS.ps_tasks),
-                '--ps_hosts', ps_hosts,
-                '--worker_hosts', worker_hosts]
-                + train_flags + optimizer_flags,
-            env=worker_env)
-
-        worker_procs.append(worker_proc)
 
     return worker_procs + ([ps_proc] if run_ps else [])
 
@@ -155,7 +163,7 @@ def main(_):
     # Wait for join and log GPU usage
     while None in [proc.poll() for proc in procs]:
         subprocess.run(['nvidia-smi'])
-        time.sleep(10.0)
+        time.sleep(60.0)
 
     # Done now.
     for proc in procs:

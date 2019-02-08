@@ -43,7 +43,7 @@ import six
 
 from scipy.special import expit
 from scipy.special import logit
-# from sklearn.metrics import adjusted_rand_score
+from sklearn.metrics import adjusted_rand_score
 import tensorflow as tf
 
 from absl import app
@@ -603,8 +603,7 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
 
       with tf.device(tf.train.replica_device_setter(
           ps_tasks=FLAGS.ps_tasks,
-          cluster=cluster_spec,
-          merge_devices=True)):
+          cluster=cluster_spec)):
         # The constructor might define TF ops/placeholders, so it is important
         # that the FFN is instantiated within the current context.
         model = model_cls(**model_kwargs)
@@ -628,8 +627,8 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
             save_checkpoint_secs=300,
             config=tf.ConfigProto(
               log_device_placement=False,
-              allow_soft_placement=True),
-              # device_filters=['/job:ps', '/job:worker/task:%d' % FLAGS.task]),
+              allow_soft_placement=True,
+              device_filters=['/job:ps', '/job:worker/task:%d' % FLAGS.task]),
             checkpoint_dir=FLAGS.train_dir,
             scaffold=scaffold,
             hooks=[tf.train.FinalOpsHook(done_ops)]) as sess:
@@ -717,6 +716,8 @@ def get_cluster_spec():
                           training.
     tf.train.ClusterSpec  describing the cluster otherwise
   '''
+  logging.info('%s %d Building cluster from ps_hosts %s, worker_hosts %s'
+               % (FLAGS.job_name, FLAGS.task, FLAGS.ps_hosts, FLAGS.worker_hosts))
   if not (FLAGS.ps_hosts or FLAGS.worker_hosts or FLAGS.ps_tasks):
     return None
   elif FLAGS.ps_hosts and FLAGS.worker_hosts and FLAGS.ps_tasks > 0:

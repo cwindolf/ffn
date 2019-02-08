@@ -32,6 +32,7 @@ flags.DEFINE_string('exclude', 'workergpu[00-02]',
                     'Slurm hostname list of machines to avoid')
 flags.DEFINE_string('slurm_log_dir', 'logs/',
                     'Have slurm save program std{err,out} in this dir')
+flags.DEFINE_string('gres', 'gpu:2', 'gpu:<num_gpus>')
 
 FLAGS = flags.FLAGS
 
@@ -60,15 +61,6 @@ def main(argv):
     # *********************************************************************** #
     # Run the job
 
-    # Check env for srun
-    try:
-        subprocess.run(['srun', '--version'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except FileNotFoundError:
-        import sys
-        sys.exit('srun: command not found.\n'
-                 'Try a `module load slurm`')
-
     print('Running job with log dir', os.path.abspath(FLAGS.slurm_log_dir))
 
     res = subprocess.run(['srun',
@@ -77,7 +69,7 @@ def main(argv):
             '--output', os.path.join(FLAGS.slurm_log_dir, 'ffn_%N_%j.out'),
             '--error', os.path.join(FLAGS.slurm_log_dir, 'ffn_%N_%j.err'),
             '-p', 'gpu',
-            '--gres=gpu:2',
+            '--gres', FLAGS.gres,
             '--exclude', FLAGS.exclude,
             '--exclusive',
 
