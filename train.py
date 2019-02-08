@@ -43,6 +43,7 @@ import six
 
 from scipy.special import expit
 from scipy.special import logit
+# from sklearn.metrics import adjusted_rand_score
 import tensorflow as tf
 
 from absl import app
@@ -107,6 +108,7 @@ class EvalTracker(object):
     self.images_xy = deque(maxlen=16)
     self.images_xz = deque(maxlen=16)
     self.images_yz = deque(maxlen=16)
+    self.adj_rand_score = 0
 
   def slice_image(self, labels, predicted, weights, slice_axis):
     """Builds a tf.Summary showing a slice of an object mask.
@@ -169,6 +171,8 @@ class EvalTracker(object):
     pred_bg = np.logical_not(pred_mask)
     true_bg = np.logical_not(true_mask)
 
+    self.adj_rand_score += adjusted_rand_score(true_mask.ravel(), pred_mask.ravel())
+
     self.tp += np.sum(pred_mask & true_mask)
     self.fp += np.sum(pred_mask & true_bg)
     self.fn += np.sum(pred_bg & true_mask)
@@ -213,7 +217,9 @@ class EvalTracker(object):
                              simple_value=self.tn / max(self.tn + self.fp, 1)),
             tf.Summary.Value(tag='eval/f1',
                              simple_value=(2.0 * precision * recall /
-                                           (precision + recall)))
+                                           (precision + recall))),
+            tf.Summary.Value(tag='eval/adjusted_rand_score',
+                             simple_value=self.adj_rand_score / self.num_patches),
         ])
 
     return summaries
@@ -592,7 +598,7 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
       done_ops = []
       with tf.device('/job:worker/task:%d' % FLAGS.task):
         done_ops = ([q.enqueue(1) for q in create_done_queues()]
-            + [tf.print(tf.constant(0), [],
+            + [tf.Print(tf.constant(0), [],
                 message=('Worker %d signaling parameter servers' % FLAGS.task))])
 
       with tf.device(tf.train.replica_device_setter(
@@ -622,8 +628,8 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
             save_checkpoint_secs=300,
             config=tf.ConfigProto(
               log_device_placement=False,
-              allow_soft_placement=True,
-              device_filters=['/job:ps', '/job:worker/task:%d' % FLAGS.task]),
+              allow_soft_placement=True),
+              # device_filters=['/job:ps', '/job:worker/task:%d' % FLAGS.task]),
             checkpoint_dir=FLAGS.train_dir,
             scaffold=scaffold,
             hooks=[tf.train.FinalOpsHook(done_ops)]) as sess:
@@ -636,8 +642,8 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
             # a launch schedule where new replicas are brought online gradually.
             # logging.info('Delaying replica start.')
             # while step < FLAGS.replica_step_delay * FLAGS.task:
-            #   time.sleep(5.0)
-            #   step = int(sess.run(model.global_step))
+              # time.sleep(5.0)
+              # step = int(sess.run(model.global_step))
             pass
           else:
             summary_writer = tf.summary.FileWriterCache.get(FLAGS.train_dir)
@@ -734,7 +740,7 @@ def main(argv=()):
   logging.info('Random seed: %r', seed)
   random.seed(seed)
 
-  train_ffn(model_class, 
+  train_ffn(model_class,
             cluster_spec=get_cluster_spec(),
             batch_size=FLAGS.batch_size,
             **json.loads(FLAGS.model_args))
