@@ -84,20 +84,6 @@ def build_cluster_args():
 
             cur_task += 1
 
-    # while sum(n_gpus):
-    #     for i in range(num_nodes):
-    #         if n_gpus[i] > 0:
-    #             gpu_i = n_gpus[i] - 1
-    #             h = hostnames[i] + ':' + str(FLAGS.worker_port_min + gpu_i)
-    #             worker_hosts.append(h)
-
-    #             if i == node_idx:
-    #                 worker_gpu_inds.append(gpu_i)
-    #                 worker_tasks.append(cur_task)
-
-    #             n_gpus[i] -= 1
-    #         cur_task += 1
-
     worker_hosts = ','.join(worker_hosts)
 
     return ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts, node_idx, num_nodes
