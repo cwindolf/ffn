@@ -102,8 +102,11 @@ def launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts,
                        for f in module_dict['ffn.training.optimizer']
                        if f.present]
 
+    # Give a GPU to the PS if we're on 4 gpus
+    gpu_for_ps = -1 if len(worker_gpu_inds) > 3 and run_ps else None
+
     worker_procs = []
-    for worker_task, gpu_idx in zip(worker_tasks, worker_gpu_inds):
+    for worker_task, gpu_idx in zip(worker_tasks[:gpu_for_ps], worker_gpu_inds[:gpu_for_ps]):
         worker_env = os.environ.copy()
         worker_env['CUDA_VISIBLE_DEVICES'] = str(gpu_idx)
 
@@ -120,21 +123,41 @@ def launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts,
         worker_procs.append(worker_proc)
 
     # Parameter server
+    ps_procs = []
     if run_ps:
-        ps_env = os.environ.copy()
-        ps_env['CUDA_VISIBLE_DEVICES'] = '-1'
+        if gpu_for_ps is not None:
+            ps_env = os.environ.copy()
+            ps_env['CUDA_VISIBLE_DEVICES'] = str(worker_gpu_inds[-1])
 
-        ps_proc = subprocess.Popen(['python', 'train.py',
-                # Cluster config
-                '--job_name', 'ps', # !
-                '--task', ps_task,
-                '--ps_tasks', str(FLAGS.ps_tasks),
-                '--ps_hosts', ps_hosts,
-                '--worker_hosts', worker_hosts]
-                + train_flags + optimizer_flags,
-            env=ps_env)
+            ps_proc = subprocess.Popen(['python', 'train.py',
+                    # Cluster config
+                    '--job_name', 'ps', # !
+                    '--task', ps_task,
+                    '--ps_tasks', str(FLAGS.ps_tasks),
+                    '--ps_hosts', ps_hosts,
+                    '--worker_hosts', worker_hosts]
+                    + train_flags + optimizer_flags,
+                env=ps_env)
 
-    return worker_procs + ([ps_proc] if run_ps else [])
+            ps_procs.append(ps_proc)
+
+        else:
+            ps_env = os.environ.copy()
+            ps_env['CUDA_VISIBLE_DEVICES'] = '-1'
+
+            ps_proc = subprocess.Popen(['python', 'train.py',
+                    # Cluster config
+                    '--job_name', 'ps', # !
+                    '--task', ps_task,
+                    '--ps_tasks', str(FLAGS.ps_tasks),
+                    '--ps_hosts', ps_hosts,
+                    '--worker_hosts', worker_hosts]
+                    + train_flags + optimizer_flags,
+                env=ps_env)
+
+            ps_procs.append(ps_proc)
+
+    return worker_procs + ps_procs
 
 
 def main(_):
