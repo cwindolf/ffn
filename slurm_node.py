@@ -22,9 +22,6 @@ from ffn.training import training_flags
 
 flags.DEFINE_integer('ps_tasks', 1,
                      'How many parameter servers?')
-flags.DEFINE_integer('num_extra_ps', 0,
-                     'Run this many additional parameter servers on '
-                     'dedicated nodes.')
 flags.DEFINE_integer('ps_port', 2220,
                     'Port for parameter servers')
 flags.DEFINE_integer('worker_port_min', 2221,
@@ -50,59 +47,48 @@ def build_cluster_args():
     # `$SLURMD_NODENAME` is the name of the host we're running on
     me = os.environ['SLURMD_NODENAME']
 
-    # Figure out how many GPUs this host has
+    # Figure out how many GPUs each host has. Actually just how many I have,
+    # assume homogeneous for now.
     gpus_res = subprocess.run(['nvidia-smi', '-L'],
         stdout=subprocess.PIPE)
-    print(gpus_res.stdout.decode())
+    assert gpus_res.returncode == 0
     # Subtract 1 for trailing newline
     n_gpus = len(gpus_res.stdout.decode().split('\n')) - 1
-    gpu_inds = list(range(n_gpus))
 
-    # Extra parameter servers
-    extra_ps_hostnames = []
-    worker_hostnames = hostnames
-    if FLAGS.num_extra_ps:
-        extra_ps_hostnames = hostnames[-FLAGS.num_extra_ps:]
-        worker_hostnames = hostnames[:FLAGS.num_extra_ps]
-    am_extra_ps = me in extra_ps_hostnames
+    # Figure out which nodes will be running parameter servers
+    num_nodes = len(hostnames)
+    assert num_nodes >= FLAGS.ps_tasks
+    node_idx = hostnames.index(me)
+    ps_hostnames = hostnames[:FLAGS.ps_tasks]
 
-    # Compute the hostnames for workers and ps
-    # The result should be comma separated lists host1:port1,host2:port2,...
-    # Also, compute the ps and worker task indices that will run on this node
-    ps_hosts = []
-    ps_tasks = []
-    cur_ps_task = 0
-    for host in hostnames[:FLAGS.ps_tasks]:
-        if host in extra_ps_hostnames:
-            continue
-        ps_hosts.append(f'{host}:{FLAGS.ps_port}')
-        if host == me:
-            ps_tasks.append(cur_ps_task)
-        cur_ps_task += 1
-    for host in extra_ps_hostnames:
-        # ps take the role of workers, use worker ports.
-        for i in gpu_inds:
-            ps_hosts.append(f'{host}:{FLAGS.worker_port_min + i}')
-            if host == me:
-                ps_tasks.append(cur_ps_task)
-            cur_ps_task += 1
-    ps_hosts = ','.join(ps_hosts)
+    # The args themselves
+    ps_task = str(node_idx)
+    ps_hosts = ','.join(host + ':' + str(FLAGS.ps_port) for host in ps_hostnames)
 
+    # A worker per gpu per host.
+    # A worker needs to know its hostname:port, the index of its gpu, and its task number.
     worker_hosts = []
     worker_tasks = []
-    cur_worker_task = 0
-    for host in worker_hostnames:
-        for i in gpu_inds:
-            worker_hosts.append(f'{host}:{FLAGS.worker_port_min + i}')
-            if host == me:
-                worker_tasks.append(cur_worker_task)
-            cur_worker_task += 1
+    worker_gpu_inds = []
+    cur_task = 0
+
+    for h in hostnames:
+        for i in range(n_gpus):
+            host_and_port = h + ':' + str(FLAGS.worker_port_min + i)
+            worker_hosts.append(host_and_port)
+
+            if h == me:
+                worker_gpu_inds.append(i)
+                worker_tasks.append(cur_task)
+
+            cur_task += 1
+
     worker_hosts = ','.join(worker_hosts)
 
-    return ps_tasks, worker_tasks, gpu_inds, ps_hosts, worker_hosts
+    return ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts, node_idx, num_nodes
 
 
-def launch_procs(ps_tasks, worker_tasks, gpu_inds, ps_hosts, worker_hosts):
+def launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts, run_ps):
     '''
     Launch one worker for each GPU, and a parameter server if `run_ps`.
     '''
@@ -116,16 +102,15 @@ def launch_procs(ps_tasks, worker_tasks, gpu_inds, ps_hosts, worker_hosts):
                        if f.present]
 
     worker_procs = []
-    for worker_task, gpu_idx in zip(worker_tasks, gpu_inds):
+    for worker_task, gpu_idx in zip(worker_tasks, worker_gpu_inds):
         worker_env = os.environ.copy()
         worker_env['CUDA_VISIBLE_DEVICES'] = str(gpu_idx)
-        print('Worker adding gpu', gpu_idx)
 
         worker_proc = subprocess.Popen(['python', 'train.py',
                 # Cluster config
                 '--job_name', 'worker', # !
                 '--task', str(worker_task),
-                '--ps_tasks', str(len(ps_tasks)),
+                '--ps_tasks', str(FLAGS.ps_tasks),
                 '--ps_hosts', ps_hosts,
                 '--worker_hosts', worker_hosts]
                 + train_flags + optimizer_flags,
@@ -134,46 +119,38 @@ def launch_procs(ps_tasks, worker_tasks, gpu_inds, ps_hosts, worker_hosts):
         worker_procs.append(worker_proc)
 
     # Parameter server
-    ps_procs = []
-    for i, ps_task in enumerate(ps_tasks):
-        # Is there a gpu for this ps?
-        ps_gpu = ''
-        if i < len(gpu_inds) - len(worker_tasks):
-            ps_gpu = str(gpu_inds[len(worker_tasks) + i])
-
+    if run_ps:
         ps_env = os.environ.copy()
-        ps_env['CUDA_VISIBLE_DEVICES'] = ps_gpu
-        print('PS adding gpu', ps_gpu)
+        ps_env['CUDA_VISIBLE_DEVICES'] = ''
 
         ps_proc = subprocess.Popen(['python', 'train.py',
                 # Cluster config
                 '--job_name', 'ps', # !
-                '--task', str(ps_task),
-                '--ps_tasks', str(len(ps_tasks)),
+                '--task', ps_task,
+                '--ps_tasks', str(FLAGS.ps_tasks),
                 '--ps_hosts', ps_hosts,
                 '--worker_hosts', worker_hosts]
                 + train_flags + optimizer_flags,
             env=ps_env)
 
-        ps_procs.append(ps_proc)
-
-    return worker_procs + ps_procs
+    return worker_procs + ([ps_proc] if run_ps else [])
 
 
 def main(_):
     # See what nodes we are running on
-    (ps_tasks, worker_tasks, gpu_inds, ps_hosts,
-        worker_hosts) = build_cluster_args()
+    (ps_task, worker_tasks, worker_gpu_inds, ps_hosts,
+        worker_hosts, node_idx, num_nodes) = build_cluster_args()
+    run_ps = node_idx < FLAGS.ps_tasks
 
     # Launch training processes
-    procs = launch_procs(ps_tasks, worker_tasks, gpu_inds, ps_hosts, worker_hosts)
+    procs = launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts, run_ps)
 
     # Wait for join and log GPU usage
     while None in [proc.poll() for proc in procs]:
         subprocess.run(['nvidia-smi'])
         time.sleep(60.0)
 
-    # Done now, join procs
+    # Done now.
     for proc in procs:
         print(proc, proc.communicate())
 
