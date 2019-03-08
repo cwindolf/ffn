@@ -19,11 +19,15 @@ from ffn.training import training_flags
 
 # Args for configuring the cluster.
 flags.DEFINE_integer('num_nodes', 1,
-                     'Number of nodes to allocate for this computation',
+                     'Number of nodes to allocate for this computation, '
+                     'including extra parameter servers.',
                      lower_bound=1)
 flags.DEFINE_integer('num_ps', 0,
                      'How many nodes should run a parameter server? '
                      'If unset, every node will run one.')
+flags.DEFINE_integer('num_extra_ps', 0,
+                     'Run this many additional parameter servers on '
+                     'dedicated nodes.')
 flags.DEFINE_string('ps_port', '2220',
                     'Port for parameter servers')
 flags.DEFINE_string('worker_port_min', '2221',
@@ -46,6 +50,8 @@ def main(argv):
         num_ps = str(FLAGS.num_nodes)
     else:
         num_ps = str(FLAGS.num_ps)
+
+    assert FLAGS.num_nodes > FLAGS.num_extra_ps
 
     # We want to pass the optimizer flags and the training flags to
     # `slurm_node.py`. So let's serialize those.
@@ -78,7 +84,8 @@ def main(argv):
             '--ps_tasks', num_ps,
             '--ps_port', FLAGS.ps_port,
             '--worker_port_min', FLAGS.worker_port_min,
-            '--node_log_dir', os.path.join(FLAGS.slurm_log_dir)]
+            '--node_log_dir', os.path.join(FLAGS.slurm_log_dir),
+            '--num_extra_ps', str(FLAGS.num_extra_ps)]
             + train_flags + optimizer_flags)
 
     print('srun ran with return code', res.returncode)
