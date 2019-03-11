@@ -19,9 +19,6 @@ from ffn.training import optimizer
 from ffn.training import training_flags
 # pylint: enable=unused-import
 
-
-flags.DEFINE_integer('ps_tasks', 1,
-                     'How many parameter servers?')
 flags.DEFINE_integer('ps_port', 2220,
                     'Port for parameter servers')
 flags.DEFINE_integer('worker_port_min', 2221,
@@ -54,16 +51,15 @@ def build_cluster_args():
     assert gpus_res.returncode == 0
     # Subtract 1 for trailing newline
     n_gpus = len(gpus_res.stdout.decode().split('\n')) - 1
+    print(me, 'found', n_gpus, 'gpus')
 
     # Figure out which nodes will be running parameter servers
     num_nodes = len(hostnames)
-    assert num_nodes >= FLAGS.ps_tasks
     node_idx = hostnames.index(me)
-    ps_hostnames = hostnames[:FLAGS.ps_tasks]
 
     # The args themselves
     ps_task = str(node_idx)
-    ps_hosts = ','.join(host + ':' + str(FLAGS.ps_port) for host in ps_hostnames)
+    ps_hosts = ','.join(host + ':' + str(FLAGS.ps_port) for host in hostnames)
 
     # A worker per gpu per host.
     # A worker needs to know its hostname:port, the index of its gpu, and its task number.
@@ -88,7 +84,7 @@ def build_cluster_args():
     return ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts, node_idx, num_nodes
 
 
-def launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts, run_ps):
+def launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts, num_nodes):
     '''
     Launch one worker for each GPU, and a parameter server if `run_ps`.
     '''
@@ -110,7 +106,7 @@ def launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts,
                 # Cluster config
                 '--job_name', 'worker', # !
                 '--task', str(worker_task),
-                '--ps_tasks', str(FLAGS.ps_tasks),
+                '--ps_tasks', str(num_nodes),
                 '--ps_hosts', ps_hosts,
                 '--worker_hosts', worker_hosts]
                 + train_flags + optimizer_flags,
@@ -119,19 +115,18 @@ def launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts,
         worker_procs.append(worker_proc)
 
     # Parameter server
-    if run_ps:
-        ps_env = os.environ.copy()
-        ps_env['CUDA_VISIBLE_DEVICES'] = ''
+    ps_env = os.environ.copy()
+    ps_env['CUDA_VISIBLE_DEVICES'] = ''
 
-        ps_proc = subprocess.Popen(['python', 'train.py',
-                # Cluster config
-                '--job_name', 'ps', # !
-                '--task', ps_task,
-                '--ps_tasks', str(FLAGS.ps_tasks),
-                '--ps_hosts', ps_hosts,
-                '--worker_hosts', worker_hosts]
-                + train_flags + optimizer_flags,
-            env=ps_env)
+    ps_proc = subprocess.Popen(['python', 'train.py',
+            # Cluster config
+            '--job_name', 'ps', # !
+            '--task', ps_task,
+            '--ps_tasks', str(num_nodes),
+            '--ps_hosts', ps_hosts,
+            '--worker_hosts', worker_hosts]
+            + train_flags + optimizer_flags,
+        env=ps_env)
 
     return worker_procs + ([ps_proc] if run_ps else [])
 
@@ -140,10 +135,9 @@ def main(_):
     # See what nodes we are running on
     (ps_task, worker_tasks, worker_gpu_inds, ps_hosts,
         worker_hosts, node_idx, num_nodes) = build_cluster_args()
-    run_ps = node_idx < FLAGS.ps_tasks
 
     # Launch training processes
-    procs = launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts, run_ps)
+    procs = launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts, num_nodes)
 
     # Wait for join and log GPU usage
     while None in [proc.poll() for proc in procs]:
