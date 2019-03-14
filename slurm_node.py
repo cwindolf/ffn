@@ -128,7 +128,7 @@ def launch_procs(ps_task, worker_tasks, worker_gpu_inds, ps_hosts, worker_hosts,
             + train_flags + optimizer_flags,
         env=ps_env)
 
-    return worker_procs + ([ps_proc] if run_ps else [])
+    return worker_procs + [ps_proc]
 
 
 def main(_):

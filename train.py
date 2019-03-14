@@ -603,7 +603,8 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
 
       with tf.device(tf.train.replica_device_setter(
           ps_tasks=FLAGS.ps_tasks,
-          cluster=cluster_spec)):
+          cluster=cluster_spec,
+          merge_devices=True)):
         # The constructor might define TF ops/placeholders, so it is important
         # that the FFN is instantiated within the current context.
         model = model_cls(**model_kwargs)

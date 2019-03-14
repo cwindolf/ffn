@@ -1,11 +1,11 @@
 image {
-  hdf5: "/mnt/home/cwindolf/data/raw/2941_7380_2836_300.h5:raw"
+  hdf5: "/mnt/home/cwindolf/data/raw/vol_3100_8200_3350_1600_750_950.h5:raw"
 }
 image_mean: 128
 image_stddev: 33
 checkpoint_interval: 1800
 seed_policy: "PolicyPeaks"
-model_checkpoint_path: "/mnt/home/cwindolf/data/ffntrainmichalparams/model.ckpt-48000019"
+model_checkpoint_path: "/mnt/home/cwindolf/data/ffntrainmichalparams/model.ckpt-47924293"
 model_name: "convstack_3d.ConvStack3DFFNModel"
 model_args: "{\"depth\": 12, \"fov_size\": [33, 33, 33], \"deltas\": [8, 8, 8]}"
 segmentation_output_dir: "/mnt/home/cwindolf/data/ffnres/"

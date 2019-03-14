@@ -38,12 +38,6 @@ def main(argv):
     # *********************************************************************** #
     # Munge args
 
-    # Default number of parameter servers
-    if FLAGS.num_ps <= 0 or FLAGS.num_ps > FLAGS.num_nodes:
-        num_ps = str(FLAGS.num_nodes)
-    else:
-        num_ps = str(FLAGS.num_ps)
-
     # We want to pass the optimizer flags and the training flags to
     # `slurm_node.py`. So let's serialize those.
     module_dict = FLAGS.flags_by_module_dict()
@@ -67,7 +61,7 @@ def main(argv):
             '--error', os.path.join(FLAGS.slurm_log_dir, 'ffn_%N_%j.err'),
             '-p', 'gpu',
             '--gres', FLAGS.gres,
-            '--exclude', FLAGS.exclude,
+            # '--exclude', FLAGS.exclude,
             '--job-name=ffn',
             '--exclusive',
 
