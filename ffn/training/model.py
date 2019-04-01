@@ -90,6 +90,8 @@ class FFNModel(object):
     # List of image tensors to save in summaries. The images are concatenated
     # along the X axis.
     self._images = []
+    self.opt = None
+
 
   def set_uniform_io_size(self, patch_size):
     """Initializes unset input/output sizes to 'patch_size', sets input shapes.
@@ -139,7 +141,7 @@ class FFNModel(object):
       loss = self.loss
     tf.summary.scalar('optimizer_loss', self.loss)
 
-    opt = optimizer.optimizer_from_flags()
+    self.opt = opt = optimizer.optimizer_from_flags()
     grads_and_vars = opt.compute_gradients(loss)
 
     for g, v in grads_and_vars:

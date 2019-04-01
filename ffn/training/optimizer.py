@@ -18,6 +18,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import math
 import tensorflow as tf
 
 from absl import flags
@@ -38,24 +39,41 @@ flags.DEFINE_float('rmsprop_decay', 0.9, 'Decay term for RMSProp.')
 flags.DEFINE_float('adam_beta1', 0.9, 'Gradient decay term for Adam.')
 flags.DEFINE_float('adam_beta2', 0.999, 'Gradient^2 decay term for Adam.')
 flags.DEFINE_float('epsilon', 1e-8, 'Epsilon term for RMSProp and Adam.')
+flags.DEFINE_bool('synchronous', False, 'Wrap opt in SyncReplicasOptimizer')
+flags.DEFINE_integer('sync_n_replicas', 0,
+                     'If --synchronous, put the total number of workers here.')
+flags.DEFINE_enum('scale_lr', 'noscale', ['noscale', 'sqrt', 'linear'],
+                  'If --synchronous, scale the learning rate by this fn of --sync_n_replicas')
 
 
 def optimizer_from_flags():
   lr = FLAGS.learning_rate
+
+  if FLAGS.synchronous:
+    if FLAGS.scale_lr == 'sqrt':
+      lr *= math.sqrt(FLAGS.sync_n_replicas)
+    elif FLAGS.scale_lr == 'linear':
+      lr *= FLAGS.sync_n_replicas
+
   if FLAGS.optimizer == 'momentum':
-    return tf.train.MomentumOptimizer(lr, FLAGS.momentum)
+    opt = tf.train.MomentumOptimizer(lr, FLAGS.momentum)
   elif FLAGS.optimizer == 'sgd':
-    return tf.train.GradientDescentOptimizer(lr)
+    opt = tf.train.GradientDescentOptimizer(lr)
   elif FLAGS.optimizer == 'adagrad':
-    return tf.train.AdagradOptimizer(lr)
+    opt = tf.train.AdagradOptimizer(lr)
   elif FLAGS.optimizer == 'adam':
-    return tf.train.AdamOptimizer(learning_rate=lr,
+    opt = tf.train.AdamOptimizer(learning_rate=lr,
                                   beta1=FLAGS.adam_beta1,
                                   beta2=FLAGS.adam_beta2,
                                   epsilon=FLAGS.epsilon)
   elif FLAGS.optimizer == 'rmsprop':
-    return tf.train.RMSPropOptimizer(lr, FLAGS.rmsprop_decay,
+    opt = tf.train.RMSPropOptimizer(lr, FLAGS.rmsprop_decay,
                                      momentum=FLAGS.momentum,
                                      epsilon=FLAGS.epsilon)
   else:
     raise ValueError('Unknown optimizer: %s' % FLAGS.optimizer)
+
+  if FLAGS.synchronous:
+    opt = tf.train.SyncReplicasOptimizer(opt, FLAGS.sync_n_replicas, FLAGS.sync_n_replicas)
+
+  return opt

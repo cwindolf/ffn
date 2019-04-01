@@ -295,6 +295,7 @@ def define_data_input(model, queue_batch=None):
 
   label_volume_map = {}
   for vol in FLAGS.label_volumes.split(','):
+    print(vol)
     volname, path, dataset = vol.split(':')
     label_volume_map[volname] = h5py.File(path, 'r')[dataset]
 
@@ -620,6 +621,11 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
         summary_writer = None
         saver = tf.train.Saver(keep_checkpoint_every_n_hours=0.25)
         scaffold = tf.train.Scaffold(saver=saver)
+
+        hooks = [tf.train.FinalOpsHook(done_ops)]
+        if optimizer.FLAGS.synchronous:
+          hooks.append(model.opt.make_session_run_hook(FLAGS.task == 0, 0))
+
         with tf.train.MonitoredTrainingSession(
             master=server.target,
             is_chief=(FLAGS.task == 0),
@@ -631,7 +637,7 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
               device_filters=['/job:ps', '/job:worker/task:%d' % FLAGS.task]),
             checkpoint_dir=FLAGS.train_dir,
             scaffold=scaffold,
-            hooks=[tf.train.FinalOpsHook(done_ops)]) as sess:
+            hooks=hooks) as sess:
 
           eval_tracker.sess = sess
           step = int(sess.run(model.global_step))
@@ -640,10 +646,10 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
             # To avoid early instabilities when using multiple replicas, we use
             # a launch schedule where new replicas are brought online gradually.
             # logging.info('Delaying replica start.')
-            # while step < FLAGS.replica_step_delay * FLAGS.task:
-              # time.sleep(5.0)
-              # step = int(sess.run(model.global_step))
-            pass
+            while step < FLAGS.replica_step_delay * FLAGS.task:
+              time.sleep(5.0)
+              step = int(sess.run(model.global_step))
+            # pass
           else:
             summary_writer = tf.summary.FileWriterCache.get(FLAGS.train_dir)
             summary_writer.add_session_log(

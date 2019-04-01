@@ -65,12 +65,16 @@ def main(argv):
 
     res = subprocess.run(['srun',
             # srun args
+            '--job-name', 'ffntrain',
             '--nodes', str(FLAGS.num_nodes),
             '--output', os.path.join(FLAGS.slurm_log_dir, 'ffn_%N_%j.out'),
             '--error', os.path.join(FLAGS.slurm_log_dir, 'ffn_%N_%j.err'),
             '-p', 'gpu',
-            '--gres', FLAGS.gres,
-            '--exclude', FLAGS.exclude,
+            f'--gres={FLAGS.gres}',
+            # '--exclude', FLAGS.exclude,
+            # '--constraint=v100',
+            # '-c40',
+            '--ntasks-per-node=1',
             '--exclusive',
 
             # trainer script and its args
