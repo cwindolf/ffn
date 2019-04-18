@@ -50,6 +50,13 @@ def main(argv):
 
 
     # *********************************************************************** #
+    # Write out the flags
+
+    with open(os.path.join(FLAGS.train_dir, 'flagfile.txt'), 'w') as flagfile:
+        flagfile.write(FLAGS.flags_into_string())
+
+
+    # *********************************************************************** #
     # Run the job
 
     print('Running job with log dir', os.path.abspath(FLAGS.slurm_log_dir))
@@ -65,7 +72,7 @@ def main(argv):
             # '--exclude', FLAGS.exclude,
             # '--constraint=v100',
             # '-c40',
-            '--ntasks-per-node=1',
+            # '--ntasks-per-node=1',
             '--exclusive',
 
             # trainer script and its args
@@ -80,8 +87,8 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    # These flags are required in train.py, so let's bail now rather than
-    # allocating a node and then bailing.
+    # These flags are required in train.py.
+    # Bail now rather than allocating nodes and then bailing.
     flags.mark_flag_as_required('train_coords')
     flags.mark_flag_as_required('data_volumes')
     flags.mark_flag_as_required('label_volumes')

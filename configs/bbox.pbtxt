@@ -1,0 +1,11 @@
+start {
+    x: 0
+    y: 0
+    z: 0
+}
+size {
+    x: 200
+    y: 200
+    z: 100
+}
+description: "abbox"
