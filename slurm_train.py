@@ -48,39 +48,39 @@ def main(argv):
                        for f in module_dict['ffn.training.optimizer']
                        if f.present]
 
-
     # *********************************************************************** #
     # Write out the flags
 
     with open(os.path.join(FLAGS.train_dir, 'flagfile.txt'), 'w') as flagfile:
         flagfile.write(FLAGS.flags_into_string())
 
-
     # *********************************************************************** #
     # Run the job
 
     print('Running job with log dir', os.path.abspath(FLAGS.slurm_log_dir))
 
-    res = subprocess.run(['srun',
-            # srun args
-            '--job-name', 'ffntrain',
-            '--nodes', str(FLAGS.num_nodes),
-            '--output', os.path.join(FLAGS.slurm_log_dir, 'ffn_%N_%j.out'),
-            '--error', os.path.join(FLAGS.slurm_log_dir, 'ffn_%N_%j.err'),
-            '-p', 'gpu',
-            f'--gres={FLAGS.gres}',
-            # '--exclude', FLAGS.exclude,
-            # '--constraint=v100',
-            # '-c40',
-            # '--ntasks-per-node=1',
-            '--exclusive',
+    res = subprocess.run(
+        ['srun',
+         # srun args
+         '--job-name', 'ffntrain',
+         '--nodes', str(FLAGS.num_nodes),
+         '--output', os.path.join(FLAGS.slurm_log_dir, 'ffn_%N_%j.out'),
+         '--error', os.path.join(FLAGS.slurm_log_dir, 'ffn_%N_%j.err'),
+         '-p', 'gpu',
+         f'--gres={FLAGS.gres}',
+         # '--exclude', FLAGS.exclude,
+         # '--constraint=v100',
+         # '-c40',
+         # '--ntasks-per-node=1',
+         '--exclusive',
 
-            # trainer script and its args
-            'python', 'slurm_node.py',
-            '--ps_port', FLAGS.ps_port,
-            '--worker_port_min', FLAGS.worker_port_min,
-            '--node_log_dir', os.path.join(FLAGS.slurm_log_dir)]
-            + train_flags + optimizer_flags)
+         # trainer script and its args
+         'python', 'slurm_node.py',
+         '--ps_port', FLAGS.ps_port,
+         '--worker_port_min', FLAGS.worker_port_min,
+         '--node_log_dir', os.path.join(FLAGS.slurm_log_dir)]
+        + train_flags
+        + optimizer_flags)
 
     print('srun ran with return code', res.returncode)
     print('bye!')
