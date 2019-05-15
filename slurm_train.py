@@ -21,6 +21,9 @@ from ffn.training import training_flags
 flags.DEFINE_integer('num_nodes', 1,
                      'Number of nodes to allocate for this computation',
                      lower_bound=1)
+flags.DEFINE_integer('num_ps',
+                     'Total number of parameter servers',
+                     lower_bound=1)
 flags.DEFINE_string('ps_port', '2220',
                     'Port for parameter servers')
 flags.DEFINE_string('worker_port_min', '2221',
@@ -69,13 +72,14 @@ def main(argv):
          '-p', 'gpu',
          f'--gres={FLAGS.gres}',
          # '--exclude', FLAGS.exclude,
-         # '--constraint=v100',
+         '--constraint=v100',
          # '-c40',
          # '--ntasks-per-node=1',
          '--exclusive',
 
          # trainer script and its args
          'python', 'slurm_node.py',
+         '--num_ps', str(FLAGS.num_ps),
          '--ps_port', FLAGS.ps_port,
          '--worker_port_min', FLAGS.worker_port_min,
          '--node_log_dir', os.path.join(FLAGS.slurm_log_dir)]

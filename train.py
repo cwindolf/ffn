@@ -554,14 +554,16 @@ def save_flags():
 # - https://github.com/tensorflow/tensorflow/issues/4713
 # - https://gist.github.com/yaroslavvb/ea1b1bae0a75c4aae593df7eca72d9ca
 def create_done_queue(i):
-  with tf.device("/job:ps/task:%d" % (i)):
+  with tf.device("/job:ps/task:%d" % i):
     return tf.FIFOQueue(len(FLAGS.worker_hosts),
       tf.int32, shared_name="done_queue"+str(i))
+
+
 def create_done_queues():
   return [create_done_queue(i) for i in range(FLAGS.ps_tasks)]
 
 
-def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
+def ps_train_ffn(model_cls, cluster_spec=None, **model_kwargs):
   # Distributed or local training server
   if cluster_spec:
     server = tf.train.Server(cluster_spec,
@@ -570,147 +572,161 @@ def train_ffn(model_cls, cluster_spec=None, **model_kwargs):
   else:
     server = tf.train.Server.create_local_server()
 
+  # Parameter servers wait for instructions
+  logging.info('Starting parameter server.')
+  queue = create_done_queue(FLAGS.task)
+  # Lots of times ps don't need a session -- this one does to
+  # listen to its done queue
+  sess = tf.Session(server.target,
+    config=tf.ConfigProto(
+      log_device_placement=False,
+      allow_soft_placement=True))
 
-  if FLAGS.job_name == 'ps':
-    # Parameter servers wait for instructions
-    logging.info('Starting parameter server.')
-    queue = create_done_queue(FLAGS.task)
-    sess = tf.Session(server.target,
-      config=tf.ConfigProto(
-        log_device_placement=False,
-        allow_soft_placement=True))
-    for i in range(len(FLAGS.worker_hosts)):
-      sess.run(queue.dequeue())
-      logging.info('PS' + str(FLAGS.task) + ' got quit sig number ' + str(i))
-    logging.info('PS' + str(FLAGS.task) + ' exiting.')
-    time.sleep(1.0)
-    time.sleep(1.0)
-    # For some reason the sess.close is hanging, this hard kill is the only
-    # way I can find to exit.
-    os._exit(0)
+  # Wait for quit queue signals from workers
+  for i in range(len(FLAGS.worker_hosts)):
+    sess.run(queue.dequeue())
+    logging.info('PS' + str(FLAGS.task) + ' got quit sig number ' + str(i))
 
-  elif FLAGS.job_name == 'worker':
-    # Workers get to work.
-    # `job_name=='worker'` by default, so this path is hit when not distributed
-    logging.info('Starting worker.')
+  # Quit
+  logging.info('PS' + str(FLAGS.task) + ' exiting.')
+  time.sleep(1.0)
+  time.sleep(1.0)
+  # For some reason the sess.close is hanging, this hard kill is the only
+  # way I can find to exit.
+  os._exit(0)
 
-    with tf.Graph().as_default():
-      # This is how we tell the parameter servers we're finished.
-      done_ops = []
-      with tf.device('/job:worker/task:%d' % FLAGS.task):
-        done_ops = ([q.enqueue(1) for q in create_done_queues()]
-            + [tf.Print(tf.constant(0), [],
-                message=('Worker %d signaling parameter servers' % FLAGS.task))])
 
-      with tf.device(tf.train.replica_device_setter(
-          ps_tasks=FLAGS.ps_tasks,
-          cluster=cluster_spec,
-          merge_devices=True)):
-        # The constructor might define TF ops/placeholders, so it is important
-        # that the FFN is instantiated within the current context.
-        model = model_cls(**model_kwargs)
-        eval_shape_zyx = train_eval_size(model).tolist()[::-1]
+def worker_train_ffn(model_cls, cluster_spec=None, **model_kwargs):
+  # Distributed or local training server
+  if cluster_spec:
+    server = tf.train.Server(cluster_spec,
+                             job_name=FLAGS.job_name,
+                             task_index=FLAGS.task)
+  else:
+    server = tf.train.Server.create_local_server()
 
-        eval_tracker = EvalTracker(eval_shape_zyx)
-        load_data_ops = define_data_input(model, queue_batch=1)
-        prepare_ffn(model)
-        merge_summaries_op = tf.summary.merge_all()
+  # Workers get to work.
+  # `job_name=='worker'` by default, so this path is hit when not distributed
+  logging.info('Starting worker.')
 
-        if FLAGS.task == 0:
-          save_flags()
+  with tf.Graph().as_default():
+    # This is how we tell the parameter servers we're finished --
+    # We'll enqueue something onto a queue for each parameter server
+    done_ops = []
+    with tf.device('/job:worker/task:%d' % FLAGS.task):
+      done_msg = f'Worker {FLAGS.task} signaling parameter servers'
+      done_ops = ([q.enqueue(1) for q in create_done_queues()]
+                 + [tf.Print(tf.constant(0), [], message=done_msg)])
 
-        summary_writer = None
-        saver = tf.train.Saver(keep_checkpoint_every_n_hours=0.25)
-        scaffold = tf.train.Scaffold(saver=saver)
+    with tf.device(tf.train.replica_device_setter(
+        ps_tasks=FLAGS.ps_tasks,
+        cluster=cluster_spec,
+        merge_devices=True)):
+      # The constructor might define TF ops/placeholders, so it is important
+      # that the FFN is instantiated within the current context.
+      model = model_cls(**model_kwargs)
+      eval_shape_zyx = train_eval_size(model).tolist()[::-1]
 
-        hooks = [tf.train.FinalOpsHook(done_ops)]
-        if optimizer.FLAGS.synchronous:
-          hooks.append(model.opt.make_session_run_hook(FLAGS.task == 0, 0))
+      eval_tracker = EvalTracker(eval_shape_zyx)
+      load_data_ops = define_data_input(model, queue_batch=1)
+      prepare_ffn(model)
+      merge_summaries_op = tf.summary.merge_all()
 
-        with tf.train.MonitoredTrainingSession(
-            master=server.target,
-            is_chief=(FLAGS.task == 0),
-            save_summaries_steps=None,
-            save_checkpoint_secs=300,
-            config=tf.ConfigProto(
-              log_device_placement=False,
-              allow_soft_placement=True,
-              device_filters=['/job:ps', '/job:worker/task:%d' % FLAGS.task]),
-            checkpoint_dir=FLAGS.train_dir,
-            scaffold=scaffold,
-            hooks=hooks) as sess:
+      if FLAGS.task == 0:
+        save_flags()
 
-          eval_tracker.sess = sess
-          step = int(sess.run(model.global_step))
+      summary_writer = None
+      saver = tf.train.Saver(keep_checkpoint_every_n_hours=0.25)
+      scaffold = tf.train.Scaffold(saver=saver)
 
-          if FLAGS.task > 0:
-            # To avoid early instabilities when using multiple replicas, we use
-            # a launch schedule where new replicas are brought online gradually.
-            # logging.info('Delaying replica start.')
-            while step < FLAGS.replica_step_delay * FLAGS.task:
-              time.sleep(5.0)
-              step = int(sess.run(model.global_step))
-            # pass
+      hooks = [tf.train.FinalOpsHook(done_ops)]
+      if optimizer.FLAGS.synchronous:
+        hooks.append(model.opt.make_session_run_hook(FLAGS.task == 0, 0))
+
+      with tf.train.MonitoredTrainingSession(
+          master=server.target,
+          is_chief=(FLAGS.task == 0),
+          save_summaries_steps=None,
+          save_checkpoint_secs=300,
+          config=tf.ConfigProto(
+            log_device_placement=False,
+            allow_soft_placement=True,
+            device_filters=['/job:ps', '/job:worker/task:%d' % FLAGS.task]),
+          checkpoint_dir=FLAGS.train_dir,
+          scaffold=scaffold,
+          hooks=hooks) as sess:
+
+        eval_tracker.sess = sess
+        step = int(sess.run(model.global_step))
+
+        if FLAGS.task > 0:
+          # To avoid early instabilities when using multiple replicas, we use
+          # a launch schedule where new replicas are brought online gradually.
+          # logging.info('Delaying replica start.')
+          while step < FLAGS.replica_step_delay * FLAGS.task:
+            time.sleep(5.0)
+            step = int(sess.run(model.global_step))
+          # pass
+        else:
+          summary_writer = tf.summary.FileWriterCache.get(FLAGS.train_dir)
+          summary_writer.add_session_log(
+              tf.summary.SessionLog(status=tf.summary.SessionLog.START), step)
+
+        fov_shifts = list(model.shifts)  # x, y, z
+        if FLAGS.shuffle_moves:
+          random.shuffle(fov_shifts)
+
+        policy_map = {
+            'fixed': partial(fixed_offsets, fov_shifts=fov_shifts),
+            'max_pred_moves': max_pred_offsets
+        }
+        batch_it = get_batch(lambda: sess.run(load_data_ops),
+                             eval_tracker, model, FLAGS.batch_size,
+                             policy_map[FLAGS.fov_policy])
+
+        t_last = time.time()
+
+        while not sess.should_stop() and step < FLAGS.max_steps:
+          # Run summaries periodically.
+          t_curr = time.time()
+          if t_curr - t_last > FLAGS.summary_rate_secs and FLAGS.task == 0:
+            logging.info('Saving summaries at step ' + str(step))
+            summ_op = merge_summaries_op
+            t_last = t_curr
           else:
-            summary_writer = tf.summary.FileWriterCache.get(FLAGS.train_dir)
-            summary_writer.add_session_log(
-                tf.summary.SessionLog(status=tf.summary.SessionLog.START), step)
+            summ_op = None
 
-          fov_shifts = list(model.shifts)  # x, y, z
-          if FLAGS.shuffle_moves:
-            random.shuffle(fov_shifts)
+          seed, patches, labels, weights = next(batch_it)
 
-          policy_map = {
-              'fixed': partial(fixed_offsets, fov_shifts=fov_shifts),
-              'max_pred_moves': max_pred_offsets
-          }
-          batch_it = get_batch(lambda: sess.run(load_data_ops),
-                               eval_tracker, model, FLAGS.batch_size,
-                               policy_map[FLAGS.fov_policy])
+          updated_seed, step, summ = run_training_step(
+              sess, model, summ_op,
+              feed_dict={
+                  model.loss_weights: weights,
+                  model.labels: labels,
+                  model.input_patches: patches,
+                  model.input_seed: seed,
+              })
 
-          t_last = time.time()
+          # Save prediction results in the original seed array so that
+          # they can be used in subsequent steps.
+          mask.update_at(seed, (0, 0, 0), updated_seed)
 
-          while not sess.should_stop() and step < FLAGS.max_steps:
-            # Run summaries periodically.
-            t_curr = time.time()
-            if t_curr - t_last > FLAGS.summary_rate_secs and FLAGS.task == 0:
-              logging.info('Saving summaries at step ' + str(step))
-              summ_op = merge_summaries_op
-              t_last = t_curr
-            else:
-              summ_op = None
+          # Record summaries.
+          if summ is not None:
+            logging.info('Saving summaries.')
+            summ = tf.Summary.FromString(summ)
 
-            seed, patches, labels, weights = next(batch_it)
+            # Compute a loss over the whole training patch (i.e. more than a
+            # single-step field of view of the network). This quantifies the
+            # quality of the final object mask.
+            summ.value.extend(eval_tracker.get_summaries())
+            eval_tracker.reset()
 
-            updated_seed, step, summ = run_training_step(
-                sess, model, summ_op,
-                feed_dict={
-                    model.loss_weights: weights,
-                    model.labels: labels,
-                    model.input_patches: patches,
-                    model.input_seed: seed,
-                })
+            assert summary_writer is not None
+            summary_writer.add_summary(summ, step)
 
-            # Save prediction results in the original seed array so that
-            # they can be used in subsequent steps.
-            mask.update_at(seed, (0, 0, 0), updated_seed)
-
-            # Record summaries.
-            if summ is not None:
-              logging.info('Saving summaries.')
-              summ = tf.Summary.FromString(summ)
-
-              # Compute a loss over the whole training patch (i.e. more than a
-              # single-step field of view of the network). This quantifies the
-              # quality of the final object mask.
-              summ.value.extend(eval_tracker.get_summaries())
-              eval_tracker.reset()
-
-              assert summary_writer is not None
-              summary_writer.add_summary(summ, step)
-
-        if summary_writer is not None:
-          summary_writer.flush()
+      if summary_writer is not None:
+        summary_writer.flush()
 
 
 def get_cluster_spec():
@@ -747,6 +763,11 @@ def main(argv=()):
   seed = int(time.time() * 1000 + FLAGS.task * 3600 * 24)
   logging.info('Random seed: %r', seed)
   random.seed(seed)
+
+  if FLAGS.job_name == 'ps':
+    train_ffn = ps_train_ffn
+  elif FLAGS.job_name == 'worker':
+    train_ffn = worker_train_ffn
 
   train_ffn(model_class,
             cluster_spec=get_cluster_spec(),
