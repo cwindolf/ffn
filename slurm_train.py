@@ -21,7 +21,7 @@ from ffn.training import training_flags
 flags.DEFINE_integer('num_nodes', 1,
                      'Number of nodes to allocate for this computation',
                      lower_bound=1)
-flags.DEFINE_integer('num_ps',
+flags.DEFINE_integer('num_ps', 1,
                      'Total number of parameter servers',
                      lower_bound=1)
 flags.DEFINE_string('ps_port', '2220',

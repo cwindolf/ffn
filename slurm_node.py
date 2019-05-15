@@ -19,7 +19,7 @@ from ffn.training import optimizer
 from ffn.training import training_flags
 # pylint: enable=unused-import
 
-flags.DEFINE_integer('num_ps',
+flags.DEFINE_integer('num_ps', 1,
                      'Total number of parameter servers',
                      lower_bound=1)
 flags.DEFINE_integer('ps_port', 2220,
