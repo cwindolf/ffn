@@ -62,7 +62,8 @@ def build_cluster_args():
 
     # The args themselves
     ps_task = str(node_idx)
-    ps_hostnames = hostnames[0:FLAGS.num_ps + 1]
+    ps_hostnames = hostnames[0:FLAGS.num_ps]
+    print(f'parameter server hosts: {ps_hostnames}')
     run_ps = me in ps_hostnames
     ps_hosts = ','.join(f'{host}:{FLAGS.ps_port}' for host in ps_hostnames)
 
@@ -116,7 +117,7 @@ def launch_procs(ps_task, run_ps, worker_tasks, worker_gpu_inds, ps_hosts,
              # Cluster config
              '--job_name', 'worker',  # !
              '--task', str(worker_task),
-             '--ps_tasks', str(num_nodes),
+             '--ps_tasks', str(FLAGS.num_ps),
              '--ps_hosts', ps_hosts,
              '--worker_hosts', worker_hosts]
             + train_flags + optimizer_flags,
@@ -136,7 +137,7 @@ def launch_procs(ps_task, run_ps, worker_tasks, worker_gpu_inds, ps_hosts,
              # Cluster config
              '--job_name', 'ps',  # !
              '--task', ps_task,
-             '--ps_tasks', str(num_nodes),
+             '--ps_tasks', str(FLAGS.num_ps),
              '--ps_hosts', ps_hosts,
              '--worker_hosts', worker_hosts]
             + train_flags + optimizer_flags,
