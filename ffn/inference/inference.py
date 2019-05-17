@@ -585,7 +585,7 @@ class Canvas(object):
         # Too close to an existing segment?
         low = np.array(pos) - mbd
         high = np.array(pos) + mbd + 1
-        sel = [slice(s, e) for s, e in zip(low, high)]
+        sel = tuple([slice(s, e) for s, e in zip(low, high)])
         if np.any(self.segmentation[sel] > 0):
           logging.debug('Too close to existing segment.')
           self.segmentation[pos] = -1
