@@ -41,7 +41,7 @@ flags.DEFINE_string('validation_data_volumes', None,
                     'Similar to --data_volumes, but for validation.')
 flags.DEFINE_string('validation_label_volumes', None,
                     'Similar to --label_volumes, but for validation.')
-flags.DEFINE_string('validation_train_coords', None,
+flags.DEFINE_string('validation_coords', None,
                     'Similar to --train_coords, but for validation.')
 
 
