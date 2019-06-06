@@ -35,6 +35,16 @@ flags.DEFINE_string('model_args', None,
                     'JSON string with arguments to be passed to the model '
                     'constructor.')
 
+
+# Options related to validation
+flags.DEFINE_string('validation_data_volumes', None,
+                    'Similar to --data_volumes, but for validation.')
+flags.DEFINE_string('validation_label_volumes', None,
+                    'Similar to --label_volumes, but for validation.')
+flags.DEFINE_string('validation_train_coords', None,
+                    'Similar to --train_coords, but for validation.')
+
+
 # Training infra options.
 flags.DEFINE_string('train_dir', '/tmp',
                     'Path where checkpoints and other data will be saved.')
@@ -47,7 +57,6 @@ flags.DEFINE_integer('replica_step_delay', 300,
                      'replica.')
 flags.DEFINE_integer('summary_rate_secs', 120,
                      'How often to save summaries (in seconds).')
-
 
 
 # FFN training options.
@@ -63,7 +72,6 @@ flags.DEFINE_enum('fov_policy', 'fixed', ['fixed', 'max_pred_moves'],
                   'maximum mask activation within a plane perpendicular to '
                   'one of the 6 Cartesian directions, offset by +/- '
                   'model.deltas from the current FOV position.')
-
 
 
 # TODO(mjanusz): Implement fov_moves > 1 for the 'fixed' policy.

@@ -82,7 +82,7 @@ FLAGS = flags.FLAGS
 class EvalTracker(object):
   """Tracks eval results over multiple training steps."""
 
-  def __init__(self, eval_shape):
+  def __init__(self, eval_shape, prefix=None):
     self.eval_labels = tf.placeholder(
         tf.float32, [1] + eval_shape + [1], name='eval_labels')
     self.eval_preds = tf.placeholder(
@@ -94,6 +94,9 @@ class EvalTracker(object):
     self.eval_threshold = logit(0.9)
     self.sess = None
     self._eval_shape = eval_shape
+    self.prefix = ''
+    if prefix:
+      self.prefix = prefix.rstrip('/') + '/'
 
   def reset(self):
     """Resets status of the tracker."""
@@ -148,7 +151,7 @@ class EvalTracker(object):
     axis_names = axis_names.replace(axis_names[slice_axis], '')
 
     return tf.Summary.Value(
-        tag='final_%s' % axis_names[::-1],
+        tag=f'{self.prefix}final_{axis_names[::-1]}',
         image=tf.Summary.Image(
             height=h, width=w * 3, colorspace=1,  # greyscale
             encoded_image_string=buf.getvalue()))
@@ -199,26 +202,26 @@ class EvalTracker(object):
 
     summaries = (
         list(self.images_xy) + list(self.images_xz) + list(self.images_yz) + [
-            tf.Summary.Value(tag='masked_voxel_fraction',
+            tf.Summary.Value(tag=f'{self.prefix}masked_voxel_fraction',
                              simple_value=(self.masked_voxels /
                                            self.total_voxels)),
-            tf.Summary.Value(tag='eval/patch_loss',
+            tf.Summary.Value(tag=f'{self.prefix}eval/patch_loss',
                              simple_value=self.loss / self.num_patches),
-            tf.Summary.Value(tag='eval/patches',
+            tf.Summary.Value(tag=f'{self.prefix}eval/patches',
                              simple_value=self.num_patches),
-            tf.Summary.Value(tag='eval/accuracy',
+            tf.Summary.Value(tag=f'{self.prefix}eval/accuracy',
                              simple_value=(self.tp + self.tn) / (
                                  self.tp + self.tn + self.fp + self.fn)),
-            tf.Summary.Value(tag='eval/precision',
+            tf.Summary.Value(tag=f'{self.prefix}eval/precision',
                              simple_value=precision),
-            tf.Summary.Value(tag='eval/recall',
+            tf.Summary.Value(tag=f'{self.prefix}eval/recall',
                              simple_value=recall),
-            tf.Summary.Value(tag='eval/specificity',
+            tf.Summary.Value(tag=f'{self.prefix}eval/specificity',
                              simple_value=self.tn / max(self.tn + self.fp, 1)),
-            tf.Summary.Value(tag='eval/f1',
+            tf.Summary.Value(tag=f'{self.prefix}eval/f1',
                              simple_value=(2.0 * precision * recall /
                                            (precision + recall))),
-            tf.Summary.Value(tag='eval/adjusted_rand_score',
+            tf.Summary.Value(tag=f'{self.prefix}eval/adjusted_rand_score',
                              simple_value=self.adj_rand_score / self.num_patches),
         ])
 
@@ -241,6 +244,12 @@ def run_training_step(sess, model, fetch_summary, feed_dict):
     summ = None
 
   return prediction, step, summ
+
+
+def run_validation_step(sess, model, feed_dict):
+  """Runs one validation step for a single FFN FOV."""
+  prediction = sess.run(model.logits, feed_dict)
+  return prediction
 
 
 def fov_moves():
@@ -290,17 +299,26 @@ def _get_permutable_axes():
   return [int(x) + 1 for x in FLAGS.permutable_axes]
 
 
-def define_data_input(model, queue_batch=None):
+def define_data_input(model, queue_batch=None, val=False):
   """Adds TF ops to load input data."""
+  # This method handles the creation of data loading ops for
+  # training data by default, or validation data if val=True.
+  label_volumes = FLAGS.label_volumes
+  data_volumes = FLAGS.data_volumes
+  train_coords = FLAGS.train_coords
+  if val:
+    label_volumes = FLAGS.validation_label_volumes
+    data_volumes = FLAGS.validation_data_volumes
+    train_coords = FLAGS.validation_train_coords
 
   label_volume_map = {}
-  for vol in FLAGS.label_volumes.split(','):
+  for vol in label_volumes.split(','):
     print(vol)
     volname, path, dataset = vol.split(':')
     label_volume_map[volname] = h5py.File(path, 'r')[dataset]
 
   image_volume_map = {}
-  for vol in FLAGS.data_volumes.split(','):
+  for vol in data_volumes.split(','):
     volname, path, dataset = vol.split(':')
     image_volume_map[volname] = h5py.File(path, 'r')[dataset]
 
@@ -318,7 +336,7 @@ def define_data_input(model, queue_batch=None):
 
   # Fetch a single coordinate and volume name from a queue reading the
   # coordinate files or from saved hard/important examples
-  coord, volname = inputs.load_patch_coordinates(FLAGS.train_coords)
+  coord, volname = inputs.load_patch_coordinates(train_coords)
 
   # Load object labels (segmentation).
   labels = inputs.load_from_numpylike(
@@ -539,6 +557,15 @@ def get_batch(load_example, eval_tracker, model, batch_size, get_offsets):
       seeds[i][:] = batched_seeds[i, ...]
 
 
+def eval_batch(load_example, eval_tracker, model, batch_size, get_offsets):
+  seed_shape = train_canvas_size(model).tolist()[::-1]
+  for _ in range(batch_size):
+    full_patches, full_labels, loss_weights, coord, volname = load_example()
+    seed = logit(mask.make_seed(seed_shape, 1, pad=FLAGS.seed_pad))
+    eval_tracker.add_patch(
+        full_labels, seed, loss_weights, coord, volname, full_patches)
+
+
 def save_flags():
   gfile.MakeDirs(FLAGS.train_dir)
   with gfile.Open(os.path.join(FLAGS.train_dir,
@@ -597,6 +624,9 @@ def ps_train_ffn(model_cls, cluster_spec=None, **model_kwargs):
 
 
 def worker_train_ffn(model_cls, cluster_spec=None, **model_kwargs):
+  # First worker does some extra work
+  is_chief = FLAGS.task == 0
+
   # Distributed or local training server
   if cluster_spec:
     server = tf.train.Server(cluster_spec,
@@ -632,20 +662,27 @@ def worker_train_ffn(model_cls, cluster_spec=None, **model_kwargs):
       prepare_ffn(model)
       merge_summaries_op = tf.summary.merge_all()
 
-      if FLAGS.task == 0:
+      if is_chief:
+        # Chief writes out the parameters that started the run
         save_flags()
+
+        # Chief does validation
+        val_eval_tracker = EvalTracker(eval_shape_zyx, prefix='validation')
+        val_load_data_ops = define_data_input(model, queue_batch=1, val=True)
 
       summary_writer = None
       saver = tf.train.Saver(keep_checkpoint_every_n_hours=0.25)
       scaffold = tf.train.Scaffold(saver=saver)
 
       hooks = [tf.train.FinalOpsHook(done_ops)]
+
+      # Support for synchronous optimizers
       if optimizer.FLAGS.synchronous:
-        hooks.append(model.opt.make_session_run_hook(FLAGS.task == 0, 0))
+        hooks.append(model.opt.make_session_run_hook(is_chief, 0))
 
       with tf.train.MonitoredTrainingSession(
           master=server.target,
-          is_chief=(FLAGS.task == 0),
+          is_chief=is_chief,
           save_summaries_steps=None,
           save_checkpoint_secs=300,
           config=tf.ConfigProto(
@@ -684,17 +721,35 @@ def worker_train_ffn(model_cls, cluster_spec=None, **model_kwargs):
                              eval_tracker, model, FLAGS.batch_size,
                              policy_map[FLAGS.fov_policy])
 
+        if is_chief:
+          val_batch_it = get_batch(lambda: sess.run(val_load_data_ops),
+                                   val_eval_tracker, model, FLAGS.batch_size,
+                                   policy_map[FLAGS.fov_policy])
+
         t_last = time.time()
 
         while not sess.should_stop() and step < FLAGS.max_steps:
           # Run summaries periodically.
           t_curr = time.time()
-          if t_curr - t_last > FLAGS.summary_rate_secs and FLAGS.task == 0:
+          if t_curr - t_last > FLAGS.summary_rate_secs and is_chief:
             logging.info('Saving summaries at step ' + str(step))
             summ_op = merge_summaries_op
             t_last = t_curr
           else:
             summ_op = None
+
+          if is_chief:
+            # Run validation step
+            # Might end up reducing the freq at which this runs.
+            vs, vp, vl, vw = next(val_batch_it)
+            updated_vs = run_validation_step(sess, model,
+                feed_dict={
+                    model.loss_weights: vw,
+                    model.labels: vl,
+                    model.input_patches: vp,
+                    model.input_seed: vs,
+                })
+            mask.update_at(vs, (0, 0, 0), updated_vs)
 
           seed, patches, labels, weights = next(batch_it)
 
