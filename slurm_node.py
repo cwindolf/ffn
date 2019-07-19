@@ -106,8 +106,15 @@ def launch_procs(ps_task, run_ps, worker_tasks, worker_gpu_inds, ps_hosts,
                        for f in module_dict['ffn.training.optimizer']
                        if f.present]
 
+    start_chief = False
     worker_procs = []
     for worker_task, gpu_idx in zip(worker_tasks, worker_gpu_inds):
+        if FLAGS.synchronous and worker_task == 0:
+            # Delay the chief worker
+            start_chief = True
+            chief_gpu = gpu_idx
+            continue
+
         worker_env = os.environ.copy()
         worker_env['CUDA_VISIBLE_DEVICES'] = str(gpu_idx)
 
@@ -145,6 +152,25 @@ def launch_procs(ps_task, run_ps, worker_tasks, worker_gpu_inds, ps_hosts,
 
         ps_procs.append(ps_proc)
 
+    if start_chief:
+        time.sleep(60.0)
+        worker_env = os.environ.copy()
+        worker_env['CUDA_VISIBLE_DEVICES'] = str(chief_gpu)
+
+        worker_proc = subprocess.Popen(
+            ['python',
+             'train.py',
+             # Cluster config
+             '--job_name', 'worker',  # !
+             '--task', '0',
+             '--ps_tasks', str(FLAGS.num_ps),
+             '--ps_hosts', ps_hosts,
+             '--worker_hosts', worker_hosts]
+            + train_flags + optimizer_flags,
+            env=worker_env)
+
+        worker_procs.append(worker_proc)
+
     return worker_procs + ps_procs
 
 
@@ -159,6 +185,9 @@ def main(_):
                          ps_hosts, worker_hosts, num_nodes)
 
     # Wait for join and log GPU usage
+    # In the checkpoint directory, try:
+    # for f in *.out; do echo $f && tail -n 23 $f | head -14; done
+    # to see current volatile usage.
     while None in [proc.poll() for proc in procs]:
         subprocess.run(['nvidia-smi'])
         time.sleep(180.0)

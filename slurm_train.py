@@ -32,7 +32,7 @@ flags.DEFINE_string('exclude', 'workergpu[00-02]',
                     'Slurm hostname list of machines to avoid')
 flags.DEFINE_string('slurm_log_dir', 'logs/',
                     'Have slurm save program std{err,out} in this dir')
-flags.DEFINE_string('gres', 'gpu:2', 'gpu:<num_gpus>')
+flags.DEFINE_string('gres', 'gpu:4', 'gpu:<num_gpus>')
 
 FLAGS = flags.FLAGS
 
@@ -66,6 +66,7 @@ def main(argv):
         ['srun',
          # srun args
          '--job-name', 'ffntrain',
+         '--ntasks-per-node=1',
          '--nodes', str(FLAGS.num_nodes),
          '--output', os.path.join(FLAGS.slurm_log_dir, 'ffn_%N_%j.out'),
          '--error', os.path.join(FLAGS.slurm_log_dir, 'ffn_%N_%j.err'),

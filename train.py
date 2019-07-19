@@ -309,7 +309,7 @@ def define_data_input(model, queue_batch=None, val=False):
   if val:
     label_volumes = FLAGS.validation_label_volumes
     data_volumes = FLAGS.validation_data_volumes
-    train_coords = FLAGS.validation_train_coords
+    train_coords = FLAGS.validation_coords
 
   label_volume_map = {}
   for vol in label_volumes.split(','):
@@ -627,6 +627,9 @@ def worker_train_ffn(model_cls, cluster_spec=None, **model_kwargs):
   # First worker does some extra work
   is_chief = FLAGS.task == 0
 
+  # Check if we have validation data
+  do_val = bool(FLAGS.validation_data_volumes)
+
   # Distributed or local training server
   if cluster_spec:
     server = tf.train.Server(cluster_spec,
@@ -642,11 +645,13 @@ def worker_train_ffn(model_cls, cluster_spec=None, **model_kwargs):
   with tf.Graph().as_default():
     # This is how we tell the parameter servers we're finished --
     # We'll enqueue something onto a queue for each parameter server
-    done_ops = []
-    with tf.device('/job:worker/task:%d' % FLAGS.task):
-      done_msg = f'Worker {FLAGS.task} signaling parameter servers'
-      done_ops = ([q.enqueue(1) for q in create_done_queues()]
-                 + [tf.Print(tf.constant(0), [], message=done_msg)])
+    # Only runs if distributed.
+    if cluster_spec:
+      done_ops = []
+      with tf.device('/job:worker/task:%d' % FLAGS.task):
+        done_msg = f'Worker {FLAGS.task} signaling parameter servers'
+        done_ops = ([q.enqueue(1) for q in create_done_queues()]
+                   + [tf.Print(tf.constant(0), [], message=done_msg)])
 
     with tf.device(tf.train.replica_device_setter(
         ps_tasks=FLAGS.ps_tasks,
@@ -660,25 +665,39 @@ def worker_train_ffn(model_cls, cluster_spec=None, **model_kwargs):
       eval_tracker = EvalTracker(eval_shape_zyx)
       load_data_ops = define_data_input(model, queue_batch=1)
       prepare_ffn(model)
-      merge_summaries_op = tf.summary.merge_all()
 
       if is_chief:
         # Chief writes out the parameters that started the run
         save_flags()
 
         # Chief does validation
-        val_eval_tracker = EvalTracker(eval_shape_zyx, prefix='validation')
-        val_load_data_ops = define_data_input(model, queue_batch=1, val=True)
+        if do_val:
+          val_eval_tracker = EvalTracker(eval_shape_zyx, prefix='validation')
+          val_load_data_ops = define_data_input(model, queue_batch=1, val=True)
 
+      merge_summaries_op = tf.summary.merge_all()
       summary_writer = None
       saver = tf.train.Saver(keep_checkpoint_every_n_hours=0.25)
       scaffold = tf.train.Scaffold(saver=saver)
 
-      hooks = [tf.train.FinalOpsHook(done_ops)]
+      # In some situations, we will add hooks.
+      hooks = []
+
+      if cluster_spec:
+        # If distributed, make sure the done queue ops run.
+        hooks.append(tf.train.FinalOpsHook(done_ops))
 
       # Support for synchronous optimizers
-      if optimizer.FLAGS.synchronous:
-        hooks.append(model.opt.make_session_run_hook(is_chief, 0))
+      if FLAGS.synchronous:
+        print(f'Running with a synchronous optimizer')
+        hooks.append(model.opt.make_session_run_hook(is_chief, num_tokens=0))
+
+      # Distributed communication
+      device_filters = None
+      if cluster_spec:
+        device_filters = ['/job:ps', '/job:worker/task:%d' % FLAGS.task]
+
+      print(f'Running with device_filters {device_filters}')
 
       with tf.train.MonitoredTrainingSession(
           master=server.target,
@@ -688,22 +707,24 @@ def worker_train_ffn(model_cls, cluster_spec=None, **model_kwargs):
           config=tf.ConfigProto(
             log_device_placement=False,
             allow_soft_placement=True,
-            device_filters=['/job:ps', '/job:worker/task:%d' % FLAGS.task]),
+            device_filters=device_filters),
           checkpoint_dir=FLAGS.train_dir,
           scaffold=scaffold,
           hooks=hooks) as sess:
 
         eval_tracker.sess = sess
+        if is_chief and do_val:
+          val_eval_tracker.sess = sess
         step = int(sess.run(model.global_step))
 
         if FLAGS.task > 0:
           # To avoid early instabilities when using multiple replicas, we use
           # a launch schedule where new replicas are brought online gradually.
           # logging.info('Delaying replica start.')
-          while step < FLAGS.replica_step_delay * FLAGS.task:
+          while (not FLAGS.synchronous) and step < FLAGS.replica_step_delay * FLAGS.task:
             time.sleep(5.0)
             step = int(sess.run(model.global_step))
-          # pass
+          logging.info(f'Worker task {FLAGS.task} coming online')
         else:
           summary_writer = tf.summary.FileWriterCache.get(FLAGS.train_dir)
           summary_writer.add_session_log(
@@ -721,7 +742,7 @@ def worker_train_ffn(model_cls, cluster_spec=None, **model_kwargs):
                              eval_tracker, model, FLAGS.batch_size,
                              policy_map[FLAGS.fov_policy])
 
-        if is_chief:
+        if is_chief and do_val:
           val_batch_it = get_batch(lambda: sess.run(val_load_data_ops),
                                    val_eval_tracker, model, FLAGS.batch_size,
                                    policy_map[FLAGS.fov_policy])
@@ -738,7 +759,7 @@ def worker_train_ffn(model_cls, cluster_spec=None, **model_kwargs):
           else:
             summ_op = None
 
-          if is_chief:
+          if is_chief and do_val:
             # Run validation step
             # Might end up reducing the freq at which this runs.
             vs, vp, vl, vw = next(val_batch_it)
@@ -775,6 +796,8 @@ def worker_train_ffn(model_cls, cluster_spec=None, **model_kwargs):
             # single-step field of view of the network). This quantifies the
             # quality of the final object mask.
             summ.value.extend(eval_tracker.get_summaries())
+            if is_chief and do_val:
+              summ.value.extend(val_eval_tracker.get_summaries())
             eval_tracker.reset()
 
             assert summary_writer is not None
