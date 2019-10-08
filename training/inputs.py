@@ -1,6 +1,17 @@
 import numpy as np
+from scipy.special import logit
 from skimage.util import view_as_windows
 import preprocessing.data_util as dx
+
+
+def fixed_seed_batch(batch_size, fov_size, seed_pad, seed_init):
+    '''A batch of "prior" seeds'''
+    fixed_seed = np.full(fov_size, seed_pad, dtype=np.float32)
+    fov_center = tuple(list(np.array(fov_size) // 2))
+    fixed_seed[fov_center] = seed_init
+    # logit or not ???
+    fixed_seed_batch = np.array([logit(fixed_seed)] * batch_size)[..., None]
+    return fixed_seed_batch
 
 
 def random_fovs(
