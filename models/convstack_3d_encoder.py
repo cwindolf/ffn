@@ -1,4 +1,5 @@
 import tensorflow as tf
+from ffn.training.models import convstack_3d
 
 
 def _fixed_convstack_3d(net, weights, depth=9):
@@ -70,13 +71,17 @@ def _fixed_convstack_3d(net, weights, depth=9):
 class ConvStack3DEncoder:
     '''Meant to load up an FFN checkpoint and hold it fixed'''
 
-    def __init__(
-        self, ffn=None, weights=None, fov_size=None, batch_size=None, depth=9
-    ):
+    def __init__(self, weights=None, fov_size=None, batch_size=None, depth=9):
         self.batch_size = batch_size
         self.depth = depth
         self.input_shape = [batch_size, *fov_size, 1]
         self.weights = weights
+        self.vars = []
+        self.input_patches = None
+        self.input_seed = None
+        self.input_patches_and_seed = None
+
+    def define_tf_graph(self):
         self.input_patches = tf.placeholder(
             tf.float32, shape=self.input_shape, name='encoder_patches'
         )
@@ -86,9 +91,7 @@ class ConvStack3DEncoder:
         self.input_patches_and_seed = tf.concat(
             [self.input_patches, self.input_seed], axis=4
         )
-        self.vars = []
 
-    def define_tf_graph(self):
         with tf.variable_scope('encode', reuse=False):
             encoding = _fixed_convstack_3d(
                 self.input_patches_and_seed, self.weights, depth=self.depth
@@ -99,6 +102,7 @@ class ConvStack3DEncoder:
         )
 
     def encode(self, input_fov):
+
         input_fov_and_seed = tf.concat([input_fov, self.input_seed], axis=4)
         with tf.variable_scope('encode_fov', reuse=False):
             encoded_fov = _fixed_convstack_3d(
@@ -109,3 +113,32 @@ class ConvStack3DEncoder:
         )
 
         return tf.stop_gradient(encoded_fov)
+
+    @classmethod
+    def from_ffn_ckpt(cls, ffn_ckpt, ffn_delta, fov_size, batch_size, depth=9):
+        ffn_deltas = [ffn_delta, ffn_delta, ffn_delta]
+        encoder_loading_graph = tf.Graph()
+        with encoder_loading_graph.as_default():
+            ffn = convstack_3d.ConvStack3DFFNModel(
+                fov_size=fov_size,
+                deltas=ffn_deltas,
+                batch_size=batch_size,
+                depth=depth,
+            )
+            # Since ffn.labels == None, this will not set up training graph
+            ffn.define_tf_graph()
+
+            trainable_names = [v.op.name for v in tf.trainable_variables()]
+
+            with tf.Session() as sess:
+                ffn.saver.restore(sess, ffn_ckpt)
+                weights = dict(
+                    zip(trainable_names, sess.run(tf.trainable_variables()))
+                )
+
+        return cls(
+            weights=weights,
+            fov_size=fov_size,
+            batch_size=batch_size,
+            depth=depth,
+        )

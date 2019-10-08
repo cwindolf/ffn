@@ -45,7 +45,6 @@ FLAGS = flags.FLAGS
 def main(argv):
     # Parse args a little -----------------------------------------
     fov_size = [FLAGS.fov_len, FLAGS.fov_len, FLAGS.fov_len]
-    ffn_deltas = [FLAGS.ffn_delta, FLAGS.ffn_delta, FLAGS.ffn_delta]
 
     with open(os.path.join(FLAGS.train_dir, 'flagfile.txt'), 'w') as ff:
         ff.write(FLAGS.flags_into_string())
@@ -66,35 +65,18 @@ def main(argv):
 
     # Load FFN weights ------------------------------------------------
     # Hooking graphs together... This bit loads up weights.
-    encoder_loading_graph = tf.Graph()
-    with encoder_loading_graph.as_default():
-        ffn = convstack_3d.ConvStack3DFFNModel(
-            fov_size=fov_size,
-            deltas=ffn_deltas,
-            batch_size=FLAGS.batch_size,
-            depth=FLAGS.depth,
-        )
-        # Since ffn.labels == None, this will not set up training graph
-        ffn.define_tf_graph()
-
-        trainable_names = [v.op.name for v in tf.trainable_variables()]
-
-        with tf.Session() as sess:
-            ffn.saver.restore(sess, FLAGS.ffn_ckpt)
-            weights = dict(
-                zip(trainable_names, sess.run(tf.trainable_variables()))
-            )
+    encoder = models.ConvStack3DEncoder.from_ffn_ckpt(
+        FLAGS.ffn_ckpt,
+        FLAGS.ffn_delta,
+        fov_size,
+        FLAGS.batch_size,
+        depth=FLAGS.layer,
+    )
 
     # Decoder graph ---------------------------------------------------
     decoding_graph = tf.Graph()
     with decoding_graph.as_default():
-        # Build encoder -----------------------------------------------
-        encoder = models.ConvStack3DEncoder(
-            weights=weights,
-            fov_size=fov_size,
-            batch_size=FLAGS.batch_size,
-            depth=FLAGS.layer,
-        )
+        # Init encoder ------------------------------------------------
         encoder.define_tf_graph()
 
         # Build decoder -----------------------------------------------
