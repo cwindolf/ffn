@@ -66,9 +66,9 @@ class ConvStack3DDecoder:
         self.loss = tf.verify_tensor_all_finite(loss, 'Invalid loss detected')
 
         # Some summaries
-        tf.summary.scalar('pixel_mse', pixel_mse)
-        tf.summary.scalar('encoding_mse', encoding_mse)
-        tf.summary.scalar('loss', loss)
+        tf.summary.scalar('metrics/pixel_mse', pixel_mse)
+        tf.summary.scalar('metrics/encoding_mse', encoding_mse)
+        tf.summary.scalar('metrics/loss', loss)
         tf.summary.image(
             'orig_and_decoded_encoding',
             tf.concat(
