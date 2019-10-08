@@ -1,4 +1,3 @@
-import numpy as np
 import os.path
 import tensorflow as tf
 from absl import app
@@ -34,6 +33,7 @@ flags.DEFINE_float('image_stddev', 33.0, '')
 # Model storage
 flags.DEFINE_string('train_dir', None, 'Where to save decoder checkpoints.')
 flags.DEFINE_string('ffn_ckpt', None, 'Load this up as the encoder.')
+flags.DEFINE_integer('max_steps', 10000, 'Number of decoder train steps.')
 
 
 FLAGS = flags.FLAGS
@@ -60,11 +60,9 @@ def main(argv):
     )
 
     # Make a batch of "init" seeds to feed the encoder.
-    # logit ???
-    fixed_seed = np.full(fov_size, FLAGS.seed_pad, dtype=np.float32)
-    fov_center = tuple(list(np.array(fov_size) // 2))
-    fixed_seed[fov_center] = FLAGS.seed_init
-    fixed_seed_batch = np.array([fixed_seed] * FLAGS.batch_size)[..., None]
+    fixed_seed_batch = inputs.fixed_seed_batch(
+        FLAGS.batch_size, fov_size, FLAGS.seed_pad, FLAGS.seed_init
+    )
 
     # Load FFN weights ------------------------------------------------
     # Hooking graphs together... This bit loads up weights.
@@ -130,11 +128,11 @@ def main(argv):
             config=config,
             scaffold=scaffold,
             checkpoint_dir=FLAGS.train_dir,
-            save_summaries_secs=300,
+            save_summaries_secs=30,
             save_checkpoint_secs=600,
         ) as sess:
             # Train decoder
-            for fov_batch in fov_batches:
+            for i, fov_batch in enumerate(fov_batches):
                 # Run decoder train op
                 sess.run(
                     decoder.train_op,
@@ -144,6 +142,10 @@ def main(argv):
                         decoder.target: fov_batch,
                     },
                 )
+
+                if i > FLAGS.max_steps:
+                    print('Reached max_steps', i)
+                    break
 
 
 # ---------------------------------------------------------------------
