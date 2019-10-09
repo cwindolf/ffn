@@ -38,12 +38,13 @@ class EncoderDecoderFFN(model.FFNModel):
                 batch_size, fov_size, seed_pad, seed_init
             ),
             depth=layer,
+            for_training=False,
         )
         self.decoder = ConvStack3DDecoder(
             fov_size=fov_size,
             batch_size=batch_size,
             depth=layer,
-            define_global_step=False,
+            for_training=False,
         )
 
         self.set_uniform_io_size(fov_size)
@@ -58,9 +59,7 @@ class EncoderDecoderFFN(model.FFNModel):
 
         encoder_init_op = tf.initializers.variables(self.encoder.vars)
         decoder_init_op, self.init_feed_dict = tf.contrib.framework.assign_from_checkpoint(
-            self.decoder_ckpt,
-            self.decoder.vars,
-            ignore_missing_vars=True,
+            self.decoder_ckpt, self.decoder.vars, ignore_missing_vars=True
         )
 
         self.input_patches = self.encoder.input_patches
@@ -96,7 +95,7 @@ class EncoderDecoderFFN(model.FFNModel):
         batch_size,
         decoder_ckpt,
         layer,
-        depth=9
+        depth=9,
     ):
         ffn_deltas = [ffn_delta, ffn_delta, ffn_delta]
         ffn_loading_graph = tf.Graph()
