@@ -1,27 +1,6 @@
 import tensorflow as tf
 from ffn.training import optimizer
-
-
-def _convstack_3d(net, depth=9):
-    conv = tf.contrib.layers.conv3d
-    with tf.contrib.framework.arg_scope(
-        [conv], num_outputs=32, kernel_size=(3, 3, 3), padding='SAME'
-    ):
-        net = conv(net, scope='conv0_a')
-        net = conv(net, scope='conv0_b', activation_fn=None)
-
-        for i in range(1, depth):
-            with tf.name_scope('residual%d' % i):
-                in_net = net
-                net = tf.nn.relu(net)
-                net = conv(net, scope='conv%d_a' % i)
-                net = conv(net, scope='conv%d_b' % i, activation_fn=None)
-                net += in_net
-
-    net = tf.nn.relu(net)
-    logits = conv(net, 1, (1, 1, 1), activation_fn=None, scope='conv_decoding')
-
-    return logits
+from models import convstacktools
 
 
 class ConvStack3DDecoder:
@@ -29,30 +8,18 @@ class ConvStack3DDecoder:
         self,
         fov_size=None,
         batch_size=None,
-        loss_lambda=None,
-        encoding=None,
+        loss_lambda=1e-3,
         depth=9,
-        encoding_channels=32,
         define_global_step=True,
     ):
         self.depth = depth
         self.half_fov_z = fov_size[0] // 2
         self.input_shape = [batch_size, *fov_size, 1]
-        # self.input_encoding = tf.placeholder(
-        #     tf.float32,
-        #     shape=[batch_size, *fov_size, encoding_channels],
-        #     name='encoding',
-        # )
-        self.input_encoding = encoding
-        self.target = tf.placeholder(
-            tf.float32, shape=self.input_shape, name='target'
-        )
+        self.target = None
         self.encoding_loss_lambda = loss_lambda
         self.loss = None
-        if define_global_step:
-            self.global_step = tf.Variable(
-                0, name='global_step', trainable=False
-            )
+        self.input_encoding = None
+        self.define_global_step = define_global_step
 
     def set_up_loss(self, encoder):
         pixel_mse = tf.reduce_mean(
@@ -128,15 +95,31 @@ class ConvStack3DDecoder:
                 )
 
     def define_tf_graph(self, encoder):
+        if self.define_global_step:
+            self.global_step = tf.Variable(
+                0, name='global_step', trainable=False
+            )
+
+        self.input_encoding = encoder.encoding
+
         with tf.variable_scope('decoder', reuse=False):
-            logits = _convstack_3d(self.input_encoding, self.depth)
+            logits = convstacktools.convstack_3d(
+                self.input_encoding, self.depth
+            )
 
         self.decoding = logits
 
-        self.set_up_loss(encoder)
-        self.set_up_optimizer()
+        self.vars = []
 
-        self.vars = [self.global_step]
+        if self.define_global_step:
+            self.target = tf.placeholder(
+                tf.float32, shape=self.input_shape, name='target'
+            )
+            self.set_up_loss(encoder)
+            self.set_up_optimizer()
+
+            self.vars += [self.global_step]
+
         self.vars += tf.get_collection(
             tf.GraphKeys.GLOBAL_VARIABLES, scope='decoder'
         )

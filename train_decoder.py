@@ -3,7 +3,6 @@ import tensorflow as tf
 from absl import app
 from absl import flags
 from training import inputs
-from ffn.training.models import convstack_3d
 import models
 
 
@@ -70,6 +69,7 @@ def main(argv):
         FLAGS.ffn_delta,
         fov_size,
         FLAGS.batch_size,
+        fixed_seed_batch,
         depth=FLAGS.layer,
     )
 
@@ -85,7 +85,6 @@ def main(argv):
             batch_size=FLAGS.batch_size,
             loss_lambda=FLAGS.loss_lambda,
             depth=FLAGS.layer,
-            encoding=encoder.encoding,
         )
         decoder.define_tf_graph(encoder)
 
