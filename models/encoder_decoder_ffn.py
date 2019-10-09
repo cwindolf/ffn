@@ -1,7 +1,7 @@
 import tensorflow as tf
-from ffn.training import model
 from training import inputs
 from models import convstacktools, ConvStack3DDecoder, ConvStack3DEncoder
+from ffn.training import model
 from ffn.training.models import convstack_3d
 
 
