@@ -10,7 +10,7 @@ class ConvStack3DDecoder:
         batch_size=None,
         loss_lambda=1e-3,
         depth=9,
-        define_global_step=True,
+        for_training=True,
     ):
         self.depth = depth
         self.half_fov_z = fov_size[0] // 2
@@ -19,7 +19,7 @@ class ConvStack3DDecoder:
         self.encoding_loss_lambda = loss_lambda
         self.loss = None
         self.input_encoding = None
-        self.define_global_step = define_global_step
+        self.for_training = for_training
 
     def set_up_loss(self, encoder):
         pixel_mse = tf.reduce_mean(
@@ -33,11 +33,11 @@ class ConvStack3DDecoder:
         self.loss = tf.verify_tensor_all_finite(loss, 'Invalid loss detected')
 
         # Some summaries
-        tf.summary.scalar('metrics/pixel_mse', pixel_mse)
-        tf.summary.scalar('metrics/encoding_mse', encoding_mse)
-        tf.summary.scalar('metrics/loss', loss)
+        tf.summary.scalar('decoder_metrics/pixel_mse', pixel_mse)
+        tf.summary.scalar('decoder_metrics/encoding_mse', encoding_mse)
+        tf.summary.scalar('decoder_metrics/loss', loss)
         tf.summary.image(
-            'orig_and_decoded_encoding',
+            'decoder/orig_and_decoded_encoding',
             tf.concat(
                 [
                     self.target[:, self.half_fov_z, ...],
@@ -47,7 +47,7 @@ class ConvStack3DDecoder:
             ),
         )
         tf.summary.image(
-            'encoding_and_reencoded_decoding',
+            'decoder/encoding_and_reencoded_decoding',
             tf.concat(
                 [
                     self.input_encoding[:, self.half_fov_z, ..., 0, None],
@@ -94,8 +94,16 @@ class ConvStack3DDecoder:
                     name='train_decoder',
                 )
 
+    def decode(self, input_fov):
+        with tf.variable_scope('decoder', reuse=True):
+            decoded_fov = convstacktools.convstack_3d(
+                input_fov, self.depth, trainable=self.for_training
+            )
+
+        return decoded_fov
+
     def define_tf_graph(self, encoder):
-        if self.define_global_step:
+        if self.for_training:
             self.global_step = tf.Variable(
                 0, name='global_step', trainable=False
             )
@@ -104,14 +112,14 @@ class ConvStack3DDecoder:
 
         with tf.variable_scope('decoder', reuse=False):
             logits = convstacktools.convstack_3d(
-                self.input_encoding, self.depth
+                self.input_encoding, self.depth, trainable=self.for_training
             )
 
         self.decoding = logits
 
         self.vars = []
 
-        if self.define_global_step:
+        if self.for_training:
             self.target = tf.placeholder(
                 tf.float32, shape=self.input_shape, name='target'
             )
