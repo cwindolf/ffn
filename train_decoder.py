@@ -14,13 +14,13 @@ flags.DEFINE_integer(
     None,
     'Layer at which to truncate the FFN, and also the depth of the decoder.',
 )
-flags.DEFINE_integer('batch_size', 1, '')
+flags.DEFINE_integer('batch_size', 4, '')
 flags.DEFINE_float('loss_lambda', 1e-3, 'Encoding loss coefficient')
 flags.DEFINE_integer('fov_len', 33, 'Length of FOV on each axis')
 flags.DEFINE_integer('ffn_delta', 8, '')
 flags.DEFINE_float('seed_pad', 0.5, '')
 flags.DEFINE_float('seed_init', 0.95, '')
-flags.DEFINE_integer('depth', 9, 'Depth of original FFN model.')
+flags.DEFINE_integer('depth', 12, 'Depth of original FFN model.')
 
 # Data
 flags.DEFINE_string(
@@ -119,7 +119,6 @@ def main(argv):
                     decoder.train_op,
                     feed_dict={
                         encoder.input_patches: fov_batch,
-                        encoder.input_seed: fixed_seed_batch,
                         decoder.target: fov_batch,
                     },
                 )
