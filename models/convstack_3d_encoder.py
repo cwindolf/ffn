@@ -1,65 +1,7 @@
 import tensorflow as tf
+from ffn.training import optimizer
 from ffn.training.models import convstack_3d
-
-
-def _fixed_convstack_3d(net, weights, depth=9):
-    """Copy of _predict_object_mask to peep at features."""
-    def initializer_kwargs(layer):
-        '''Adds constant initializers when loading fixed weights.'''
-        if weights:
-            weight_init = tf.constant_initializer(
-                weights[f'seed_update/{layer}/weights']
-            )
-            bias_init = tf.constant_initializer(
-                weights[f'seed_update/{layer}/biases']
-            )
-            return {
-                'weights_initializer': weight_init,
-                'biases_initializer': bias_init,
-            }
-        else:
-            return {}
-
-    conv = tf.contrib.layers.conv3d
-    with tf.contrib.framework.arg_scope(
-        [conv],
-        num_outputs=32,
-        kernel_size=(3, 3, 3),
-        padding='SAME',
-        trainable=not weights,
-    ):
-        net = conv(
-            net,
-            scope='conv0_a',
-            **initializer_kwargs('conv0_a'),
-        )
-        net = conv(
-            net,
-            scope='conv0_b',
-            activation_fn=None,
-            **initializer_kwargs('conv0_b'),
-        )
-
-        for i in range(1, depth):
-            with tf.name_scope(f'residual{i}'):
-                in_net = net
-                net = tf.nn.relu(net)
-                net = conv(
-                    net,
-                    scope=f'conv{i}_a',
-                    **initializer_kwargs(f'conv{i}_a'),
-                )
-
-                if i == depth - 1:
-                    return net
-
-                net = conv(
-                    net,
-                    scope=f'conv{i}_b',
-                    activation_fn=None,
-                    **initializer_kwargs(f'conv{i}_b'),
-                )
-                net += in_net
+from models import convstacktools
 
 
 class ConvStack3DEncoder:
@@ -71,16 +13,111 @@ class ConvStack3DEncoder:
         fov_size=None,
         input_seed=None,
         batch_size=None,
+        for_training=False,
+        loss_lambda=1e-3,
         depth=9,
     ):
         self.batch_size = batch_size
         self.depth = depth
+        self.half_fov_z = fov_size[0] // 2
         self.input_shape = [batch_size, *fov_size, 1]
         self.weights = weights
+        self.pixel_loss_lambda = loss_lambda
         self.vars = []
         self.input_patches = None
         self.input_seed = input_seed
         self.input_patches_and_seed = None
+        self.global_step = None
+        self.for_training = for_training
+
+    def set_up_loss(self, decoder):
+        decoding = decoder.decode(self.encoding)
+        pixel_mse = tf.reduce_mean(
+            tf.squared_difference(self.input_patches, decoding)
+        )
+        reencoding = self.encode(decoding)
+        encoding_mse = tf.reduce_mean(
+            tf.squared_difference(reencoding, self.encoding)
+        )
+        loss = self.pixel_loss_lambda * pixel_mse + encoding_mse
+        self.loss = tf.verify_tensor_all_finite(loss, 'Invalid loss detected')
+
+        # Some summaries
+        tf.summary.scalar('encoder_metrics/pixel_mse', pixel_mse)
+        tf.summary.scalar('encoder_metrics/encoding_mse', encoding_mse)
+        tf.summary.scalar('encoder_metrics/loss', loss)
+        tf.summary.image(
+            'encoder/orig_and_decoded_encoding',
+            tf.concat(
+                [
+                    self.input_patches[:, self.half_fov_z, ...],
+                    decoding[:, self.half_fov_z, ...],
+                ],
+                axis=1,
+            ),
+        )
+        tf.summary.image(
+            'encoder/encoding_and_reencoded_decoding',
+            tf.concat(
+                [
+                    self.encoding[:, self.half_fov_z, ..., 0, None],
+                    reencoding[:, self.half_fov_z, ..., 0, None],
+                ],
+                axis=1,
+            ),
+        )
+
+    def set_up_optimizer(self, loss=None, max_gradient_entry_mag=0.7):
+        if loss is None:
+            loss = self.loss
+
+        with tf.variable_scope('encoder', reuse=False):
+            self.opt = opt = optimizer.optimizer_from_flags()
+            tf.logging.info(opt)
+            grads_and_vars = opt.compute_gradients(
+                loss,
+                var_list=tf.get_collection(
+                    tf.GraphKeys.TRAINABLE_VARIABLES, scope='encoder'
+                ),
+            )
+
+            for g, v in grads_and_vars:
+                if g is None:
+                    tf.logging.error('Gradient is None: %s', v.op.name)
+
+            if max_gradient_entry_mag > 0.0:
+                grads_and_vars = [
+                    (
+                        tf.clip_by_value(
+                            g, -max_gradient_entry_mag, max_gradient_entry_mag
+                        ),
+                        v,
+                    )
+                    for g, v in grads_and_vars
+                ]
+
+            update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+            with tf.control_dependencies(update_ops):
+                self.train_op = opt.apply_gradients(
+                    grads_and_vars,
+                    global_step=self.global_step,
+                    name='train_encoder',
+                )
+
+    def add_training_ops(self, decoder):
+        assert self.for_training
+        self.global_step = tf.Variable(0, name='global_step', trainable=False)
+        self.vars += [self.global_step]
+        self.set_up_loss(decoder)
+        self.set_up_optimizer()
+
+        self.vars += [v for v in tf.get_collection(
+            tf.GraphKeys.GLOBAL_VARIABLES, scope='encoder'
+        ) if v not in self.vars]
+
+        self.saver = tf.train.Saver(
+            keep_checkpoint_every_n_hours=1, var_list=self.vars
+        )
 
     def define_tf_graph(self):
         self.input_patches = tf.placeholder(
@@ -91,30 +128,48 @@ class ConvStack3DEncoder:
             [self.input_patches, self.input_seed], axis=4
         )
 
-        with tf.variable_scope('encode', reuse=False):
-            encoding = _fixed_convstack_3d(
-                self.input_patches_and_seed, self.weights, depth=self.depth
+        with tf.variable_scope('encoder', reuse=False):
+            encoding = convstacktools.peeping_convstack_3d(
+                self.input_patches_and_seed,
+                weights=self.weights,
+                trainable=self.for_training,
+                depth=self.depth,
             )
-            self.encoding = tf.stop_gradient(encoding)
-        self.vars += tf.get_collection(
-            tf.GraphKeys.GLOBAL_VARIABLES, scope='encode'
+
+        self.encoding = encoding
+
+        self.vars = tf.get_collection(
+            tf.GraphKeys.GLOBAL_VARIABLES, scope='encoder'
         )
+
+        if not self.for_training:
+            self.saver = tf.train.Saver(
+                keep_checkpoint_every_n_hours=1, var_list=self.vars
+            )
 
     def encode(self, input_fov):
         input_fov_and_seed = tf.concat([input_fov, self.input_seed], axis=4)
-        with tf.variable_scope('encode_fov', reuse=True):
-            encoded_fov = _fixed_convstack_3d(
-                input_fov_and_seed, self.weights, depth=self.depth
+        with tf.variable_scope('encoder', reuse=True):
+            encoded_fov = convstacktools.peeping_convstack_3d(
+                input_fov_and_seed,
+                weights=self.weights,
+                trainable=self.for_training,
+                depth=self.depth,
             )
-        self.vars += tf.get_collection(
-            tf.GraphKeys.GLOBAL_VARIABLES, scope='encode_fov'
-        )
 
-        return tf.stop_gradient(encoded_fov)
+        return encoded_fov
 
     @classmethod
     def from_ffn_ckpt(
-        cls, ffn_ckpt, ffn_delta, fov_size, batch_size, input_seed, depth=9
+        cls,
+        ffn_ckpt,
+        ffn_delta,
+        fov_size,
+        batch_size,
+        input_seed,
+        loss_lambda=1e-3,
+        for_training=False,
+        depth=9,
     ):
         ffn_deltas = [ffn_delta, ffn_delta, ffn_delta]
         encoder_loading_graph = tf.Graph()
@@ -141,5 +196,7 @@ class ConvStack3DEncoder:
             fov_size=fov_size,
             batch_size=batch_size,
             input_seed=input_seed,
+            loss_lambda=loss_lambda,
+            for_training=for_training,
             depth=depth,
         )
