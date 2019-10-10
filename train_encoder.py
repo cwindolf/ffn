@@ -118,7 +118,7 @@ def main(argv):
             ),
             local_init_op=tf.group(
                 [
-                    tf.initializers.variables(encoder.vars),
+                    # tf.initializers.variables(encoder.vars),
                     tf.initializers.variables(decoder.vars),
                     tf.initializers.local_variables(),
                 ]
