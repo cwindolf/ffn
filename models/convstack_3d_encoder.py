@@ -14,7 +14,8 @@ class ConvStack3DEncoder:
         input_seed=None,
         batch_size=None,
         for_training=False,
-        loss_lambda=1e-3,
+        encoding_loss_lambda=1.0,
+        pixel_loss_lambda=1.0,
         depth=9,
     ):
         self.batch_size = batch_size
@@ -22,7 +23,8 @@ class ConvStack3DEncoder:
         self.half_fov_z = fov_size[0] // 2
         self.input_shape = [batch_size, *fov_size, 1]
         self.weights = weights
-        self.pixel_loss_lambda = loss_lambda
+        self.pixel_loss_lambda = pixel_loss_lambda
+        self.encoding_loss_lambda = encoding_loss_lambda
         self.vars = []
         self.input_patches = None
         self.input_seed = input_seed
@@ -167,7 +169,8 @@ class ConvStack3DEncoder:
         fov_size,
         batch_size,
         input_seed,
-        loss_lambda=1e-3,
+        encoding_loss_lambda=1.0,
+        pixel_loss_lambda=1.0,
         for_training=False,
         depth=9,
     ):
@@ -196,7 +199,8 @@ class ConvStack3DEncoder:
             fov_size=fov_size,
             batch_size=batch_size,
             input_seed=input_seed,
-            loss_lambda=loss_lambda,
+            encoding_loss_lambda=encoding_loss_lambda,
+            pixel_loss_lambda=pixel_loss_lambda,
             for_training=for_training,
             depth=depth,
         )

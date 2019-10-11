@@ -12,7 +12,8 @@ import models
 # Model parameters
 flags.DEFINE_integer('layer', None, 'Depth of the *coders.')
 flags.DEFINE_integer('batch_size', 4, '')
-flags.DEFINE_float('loss_lambda', 1e-3, 'Pixel loss coefficient')
+flags.DEFINE_float('pixel_loss_lambda', 1e-3, 'Pixel loss coefficient')
+flags.DEFINE_float('encoding_loss_lambda', 1.0, 'Encoding loss coefficient')
 flags.DEFINE_integer('fov_len', 33, 'Length of FOV on each axis')
 flags.DEFINE_integer('ffn_delta', 8, '')
 flags.DEFINE_float('seed_pad', 0.5, '')
@@ -73,7 +74,8 @@ def main(argv):
             fov_size,
             FLAGS.batch_size,
             fixed_seed_batch,
-            loss_lambda=FLAGS.loss_lambda,
+            pixel_loss_lambda=FLAGS.pixel_loss_lambda,
+            encoding_loss_lambda=FLAGS.encoding_loss_lambda,
             for_training=True,
             depth=FLAGS.layer,
         )
@@ -88,7 +90,8 @@ def main(argv):
                 input_seed=fixed_seed_batch,
                 batch_size=FLAGS.batch_size,
                 for_training=True,
-                loss_lambda=FLAGS.loss_lambda,
+                pixel_loss_lambda=FLAGS.pixel_loss_lambda,
+                encoding_loss_lambda=FLAGS.encoding_loss_lambda,
                 depth=FLAGS.layer,
             )
         encoder.define_tf_graph()
@@ -97,7 +100,6 @@ def main(argv):
         decoder = models.ConvStack3DDecoder(
             fov_size=fov_size,
             batch_size=FLAGS.batch_size,
-            loss_lambda=FLAGS.loss_lambda,
             depth=FLAGS.layer,
             for_training=False,
         )
