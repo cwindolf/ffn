@@ -16,19 +16,25 @@ flags.DEFINE_string('contentspec', None, 'Input datspec, the content source.')
 flags.DEFINE_string('stylespec', None, 'Target style datspec.')
 flags.DEFINE_string('outspec', None, 'Write output here.')
 
+# Model flags
+flags.DEFINE_integer('layer', None, 'Depth of encoder/decoder')
 
-# Encoder flags
+# Checkpoint flags
 flags.DEFINE_string(
     'ffn_ckpt', None, 'If supplied, load FFN weights for the encoder.'
 )
 flags.DEFINE_string(
-    'encoder_ckpt', None, 'If supplied, load encoder from a checkpoint.'
+    'encoder_ckpt', None, 'If supplied, load encoder from this checkpoint.'
 )
-
-FLAGS = flags.FLAGS
+flags.DEFINE_string(
+    'decoder_ckpt', None, 'Load decoder from this checkpoint.'
+)
 
 
 # ------------------------------- lib ---------------------------------
+
+
+# TensorFlow business -------------------------------------------------
 
 
 def load_encoder(
@@ -42,7 +48,7 @@ def load_encoder(
             ffn_ckpt=ffn_ckpt, fov_size=fov_size, input_seed=seed, depth=layer
         )
 
-    # Training graph --------------------------------------------------
+    # Model graph -----------------------------------------------------
     encoder_graph = tf.Graph()
     with encoder_graph.as_default():
         # Init encoder ------------------------------------------------
@@ -61,6 +67,22 @@ def load_encoder(
             encoder.saver.restore(session, encoder_ckpt)
 
     return encoder, encoder_graph
+
+
+def load_decoder(session, layer, fov_size, decoder_ckpt):
+    decoder_graph = tf.Graph()
+    with decoder_graph.as_default():
+        # Init decoder
+        decoder = models.ConvStack3Ddecoder(fov_size=fov_size, depth=layer)
+        decoder.define_tf_graph()
+
+        # Restore
+        decoder.saver.restore(session, decoder_ckpt)
+
+    return decoder, decoder_graph
+
+
+# Feature transforms --------------------------------------------------
 
 
 def whitening_coloring_transform(content_features, style_features):
@@ -154,13 +176,15 @@ def histogram_matching_transform(content_features, style_features):
     return hmt_features
 
 
-# ------------------------------- main --------------------------------
+# --------------------- style transfer procedure ----------------------
 
 
 def feature_transform_style_xfer(
     layer,
     contentspec,
     stylespec,
+    outspec,
+    decoder_ckpt,
     encoder_ckpt=None,
     ffn_ckpt=None,
     method='wc',
@@ -181,6 +205,11 @@ def feature_transform_style_xfer(
         Datspec pointing to the data from the new domain.
     stylespec : string
         Datspec pointing to the data from the original domain.
+    outspec : string
+        Datspec in which to save the results.
+    decoder_ckpt : string
+        Path to checkpoint of trained decoder. It should be one that
+        works with the encoder you pass in!
     encoder_ckpt : string, optional
         A tensorflow checkpoint for loading up a Convstack3DEncoder.
         Supply either this or ffn_ckpt.
@@ -192,12 +221,11 @@ def feature_transform_style_xfer(
         histogram-matching baseline transform.
     '''
     # Set up ----------------------------------------------------------
-    session = tf.InteractiveSession()
     seed = None
 
     # Load data -------------------------------------------------------
-    content_volume = dx.loadspec(FLAGS.contentspec)
-    style_volume = dx.loadspec(FLAGS.stylespec)
+    content_volume = dx.loadspec(contentspec)
+    style_volume = dx.loadspec(stylespec)
     if style_volume.shape != content_volume.shape:
         raise ValueError(
             'Style and content volumes were different shapes. This case '
@@ -207,8 +235,9 @@ def feature_transform_style_xfer(
     fov_size = content_volume.shape
 
     # Load encoder ----------------------------------------------------
+    encoding_session = tf.InteractiveSession()
     encoder, encoder_graph = load_encoder(
-        session,
+        encoding_session,
         layer,
         fov_size,
         seed,
@@ -217,12 +246,15 @@ def feature_transform_style_xfer(
     )
 
     # Embed input volumes ----------------------------------------------
-    content_features = session.run(
+    content_features = encoding_session.run(
         encoder.encoding, feed_dict={encoder.input_patches: content_volume}
     )
-    style_features = session.run(
+    style_features = encoding_session.run(
         encoder.encoding, feed_dict={encoder.input_patches: style_volume}
     )
+
+    # Close this session, we're done with TF for now
+    encoding_session.close()
 
     # Do feature transform --------------------------------------------
     # Whitening-coloring transform
@@ -241,23 +273,46 @@ def feature_transform_style_xfer(
         raise ValueError(f'Invalid method={method}.')
 
     # Load decoder ----------------------------------------------------
-    pass
+    decoding_session = tf.InteractiveSession()
+    decoder, decoder_graph = load_decoder(
+        decoding_session, layer, fov_size, decoder_ckpt
+    )
 
     # Decode transformed features -------------------------------------
-    pass
+    decoded_transform = decoding_session.run(
+        decoder.decoding,
+        feed_dict={decoder.input_encoding: transformed_features},
+    )
 
     # Write to output volume ------------------------------------------
-    pass
-
-
-def _main(argv):
-    # Deal with flags a bit
-    assert FLAGS.encoder_ckpt or FLAGS.ffn_ckpt
-    assert not (FLAGS.encoder_ckpt and FLAGS.ffn_ckpt)
-
-    feature_transform_style_xfer()
+    dx.writespec(outspec, decoded_transform)
 
 
 # ---------------------------------------------------------------------
 if __name__ == '__main__':
+    # Loving absl... I know I am fighting with it but w/e.
+    flags.mark_flag_as_required('layer')
+    flags.mark_flag_as_required('contentspec')
+    flags.mark_flag_as_required('stylespec')
+    flags.mark_flag_as_required('outspec')
+    flags.mark_flag_as_required('decoder_ckpt')
+
+    FLAGS = flags.FLAGS
+
+    def _main(argv):
+        # Deal with flags a bit
+        assert FLAGS.encoder_ckpt or FLAGS.ffn_ckpt
+        assert not (FLAGS.encoder_ckpt and FLAGS.ffn_ckpt)
+
+        feature_transform_style_xfer(
+            FLAGS.layer,
+            FLAGS.contentspec,
+            FLAGS.stylespec,
+            FLAGS.outspec,
+            FLAGS.decoder_ckpt,
+            encoder_ckpt=FLAGS.encoder_ckpt,
+            ffn_ckpt=FLAGS.ffn_ckpt,
+            method=FLAGS.method,
+        )
+
     app.run(_main)

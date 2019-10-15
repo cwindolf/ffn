@@ -102,13 +102,18 @@ class ConvStack3DDecoder:
 
         return decoded_fov
 
-    def define_tf_graph(self, encoder):
+    def define_tf_graph(self, encoder=None):
         if self.for_training:
             self.global_step = tf.Variable(
                 0, name='global_step', trainable=False
             )
 
-        self.input_encoding = encoder.encoding
+        if encoder is not None:
+            self.input_encoding = encoder.encoding
+        else:
+            self.input_encoding = tf.placeholder(
+                tf.float32, shape=self.input_shape, name='input_encoding'
+            )
 
         with tf.variable_scope('decoder', reuse=False):
             logits = convstacktools.convstack_3d(

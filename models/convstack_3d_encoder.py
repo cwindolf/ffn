@@ -188,7 +188,7 @@ class ConvStack3DEncoder:
 
             trainable_names = [v.op.name for v in tf.trainable_variables()]
 
-            with tf.Session() as sess:
+            with tf.Session(graph=encoder_loading_graph) as sess:
                 ffn.saver.restore(sess, ffn_ckpt)
                 weights = dict(
                     zip(trainable_names, sess.run(tf.trainable_variables()))
