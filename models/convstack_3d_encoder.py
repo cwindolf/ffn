@@ -17,6 +17,7 @@ class ConvStack3DEncoder:
         encoding_loss_lambda=1.0,
         pixel_loss_lambda=1.0,
         depth=9,
+        seed_as_placeholder=False,
     ):
         self.batch_size = batch_size
         self.depth = depth
@@ -31,6 +32,7 @@ class ConvStack3DEncoder:
         self.input_patches_and_seed = None
         self.global_step = None
         self.for_training = for_training
+        self.seed_as_placeholder = seed_as_placeholder
 
     def set_up_loss(self, decoder):
         decoding = decoder.decode(self.encoding)
@@ -113,9 +115,13 @@ class ConvStack3DEncoder:
         self.set_up_loss(decoder)
         self.set_up_optimizer()
 
-        self.vars += [v for v in tf.get_collection(
-            tf.GraphKeys.GLOBAL_VARIABLES, scope='encoder'
-        ) if v not in self.vars]
+        self.vars += [
+            v
+            for v in tf.get_collection(
+                tf.GraphKeys.GLOBAL_VARIABLES, scope='encoder'
+            )
+            if v not in self.vars
+        ]
 
         self.saver = tf.train.Saver(
             keep_checkpoint_every_n_hours=1, var_list=self.vars
@@ -125,7 +131,14 @@ class ConvStack3DEncoder:
         self.input_patches = tf.placeholder(
             tf.float32, shape=self.input_shape, name='encoder_patches'
         )
-        self.input_seed = tf.constant(self.input_seed)
+
+        if self.seed_as_placeholder:
+            self.input_seed = tf.placeholder(
+                tf.float32, shape=self.input_shape, name='input_seed'
+            )
+        else:
+            self.input_seed = tf.constant(self.input_seed)
+
         self.input_patches_and_seed = tf.concat(
             [self.input_patches, self.input_seed], axis=4
         )
@@ -173,6 +186,7 @@ class ConvStack3DEncoder:
         pixel_loss_lambda=1.0,
         for_training=False,
         depth=9,
+        seed_as_placeholder=False,
     ):
         ffn_deltas = [ffn_delta, ffn_delta, ffn_delta]
         encoder_loading_graph = tf.Graph()
@@ -202,5 +216,6 @@ class ConvStack3DEncoder:
             encoding_loss_lambda=encoding_loss_lambda,
             pixel_loss_lambda=pixel_loss_lambda,
             for_training=for_training,
+            seed_as_placeholder=seed_as_placeholder,
             depth=depth,
         )
