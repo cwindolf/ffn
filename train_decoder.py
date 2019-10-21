@@ -4,6 +4,7 @@ from absl import app
 from absl import flags
 from training import inputs
 import models
+import logging
 
 
 # ------------------------------- flags -------------------------------
@@ -28,6 +29,9 @@ flags.DEFINE_string(
 )
 flags.DEFINE_float('image_mean', 128.0, '')
 flags.DEFINE_float('image_stddev', 33.0, '')
+flags.DEFINE_bool(
+    'flat_seed', True, 'Use uniform prior seed instead of eyeball.'
+)
 
 # Model storage
 flags.DEFINE_string('train_dir', None, 'Where to save decoder checkpoints.')
@@ -59,11 +63,16 @@ def main(argv):
 
     # Make a batch of "init" seeds to feed the encoder.
     fixed_seed_batch = inputs.fixed_seed_batch(
-        FLAGS.batch_size, fov_size, FLAGS.seed_pad, FLAGS.seed_init
+        FLAGS.batch_size,
+        fov_size,
+        FLAGS.seed_pad,
+        FLAGS.seed_init,
+        with_init=(not FLAGS.flat_seed),
     )
 
     # Load FFN weights ------------------------------------------------
     # Hooking graphs together... This bit loads up weights.
+    logging.info('Loading encoder')
     encoder = models.ConvStack3DEncoder.from_ffn_ckpt(
         FLAGS.ffn_ckpt,
         FLAGS.ffn_delta,
@@ -80,6 +89,7 @@ def main(argv):
         encoder.define_tf_graph()
 
         # Build decoder -----------------------------------------------
+        logging.info('Init decoder')
         decoder = models.ConvStack3DDecoder(
             fov_size=fov_size,
             batch_size=FLAGS.batch_size,
