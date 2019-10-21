@@ -115,7 +115,9 @@ def fixed_convstack_3d(net, weights, depth=9):
     return logits
 
 
-def peeping_convstack_3d(net, weights=None, trainable=False, depth=9):
+def peeping_convstack_3d(
+    net, weights=None, trainable=False, depth=9, peep_loc='top'
+):
     """Copy of _predict_object_mask to peep at features.
 
     Makes a fixed net if weights are provided, otherwise a regular
@@ -157,12 +159,16 @@ def peeping_convstack_3d(net, weights=None, trainable=False, depth=9):
         for i in range(1, depth):
             with tf.name_scope(f'residual{i}'):
                 in_net = net
+
+                if i == depth - 1 and peep_loc == 'top':
+                    return net
+
                 net = tf.nn.relu(net)
                 net = conv(
                     net, scope=f'conv{i}_a', **initializer_kwargs(f'conv{i}_a')
                 )
 
-                if i == depth - 1:
+                if i == depth - 1 and peep_loc == 'middle':
                     return net
 
                 net = conv(
