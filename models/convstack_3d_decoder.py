@@ -14,7 +14,8 @@ class ConvStack3DDecoder:
     ):
         self.depth = depth
         self.half_fov_z = fov_size[0] // 2
-        self.input_shape = [batch_size, *fov_size, 1]
+        self.input_shape = [batch_size, *fov_size, 32]
+        self.target_shape = [batch_size, *fov_size, 1]
         self.target = None
         self.encoding_loss_lambda = loss_lambda
         self.loss = None
@@ -126,7 +127,7 @@ class ConvStack3DDecoder:
 
         if self.for_training:
             self.target = tf.placeholder(
-                tf.float32, shape=self.input_shape, name='target'
+                tf.float32, shape=self.target_shape, name='target'
             )
             self.set_up_loss(encoder)
             self.set_up_optimizer()
