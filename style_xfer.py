@@ -7,6 +7,7 @@ from sklearn.covariance import MinCovDet
 import preprocessing.data_util as dx
 import models
 from training import inputs
+from util import whiten
 import logging
 from absl import flags
 from absl import app
@@ -18,7 +19,9 @@ from absl import app
 # TensorFlow business -------------------------------------------------
 
 
-def load_encoder(layer, fov_size, ffn_ckpt=None, encoder_ckpt=None):
+def load_encoder(
+    layer, fov_size, batch_size=1, ffn_ckpt=None, encoder_ckpt=None
+):
     # Load FFN weights ------------------------------------------------
     # Hooking graphs together... This bit loads up weights.
     if ffn_ckpt:
@@ -27,6 +30,7 @@ def load_encoder(layer, fov_size, ffn_ckpt=None, encoder_ckpt=None):
             ffn_ckpt=ffn_ckpt,
             fov_size=fov_size,
             depth=layer,
+            batch_size=batch_size,
             seed_as_placeholder=True,
         )
 
@@ -37,7 +41,10 @@ def load_encoder(layer, fov_size, ffn_ckpt=None, encoder_ckpt=None):
         if not ffn_ckpt:
             assert encoder_ckpt
             encoder = models.ConvStack3DEncoder(
-                fov_size=fov_size, depth=layer, seed_as_placeholder=True
+                fov_size=fov_size,
+                depth=layer,
+                batch_size=batch_size,
+                seed_as_placeholder=True,
             )
         encoder.define_tf_graph()
 
@@ -56,12 +63,15 @@ def load_encoder(layer, fov_size, ffn_ckpt=None, encoder_ckpt=None):
     return encoder, encoder_graph, einit_fn
 
 
-def load_decoder(layer, fov_size, decoder_ckpt):
+def load_decoder(layer, fov_size, decoder_ckpt, batch_size=1):
     decoder_graph = tf.Graph()
     with decoder_graph.as_default():
         # Init decoder
         decoder = models.ConvStack3DDecoder(
-            fov_size=fov_size, depth=layer, for_training=False
+            fov_size=fov_size,
+            depth=layer,
+            batch_size=batch_size,
+            for_training=False,
         )
         decoder.define_tf_graph()
 
@@ -100,7 +110,6 @@ def whitening_coloring_transform(
     content_features = content_features.transpose(3, 0, 1, 2)
     content_features = content_features.reshape(nfeatures, -1)
     content_features = content_features.astype(np.float64)
-    nsamples = content_features.shape[1]
     # sqrt_N = np.sqrt(nsamples)
     style_features = style_features.transpose(3, 0, 1, 2)
     style_features = style_features.reshape(nfeatures, -1)
@@ -114,61 +123,9 @@ def whitening_coloring_transform(
     content_features -= content_feature_means
 
     # Compute whitening
-    if whitening == 'zca':
-        content_feature_corrs = (
-            content_features @ content_features.T
-        )
-        cfcdet = la.det(content_feature_corrs)
-        logging.info(f'Content feature corrs det {cfcdet}')
-        cw, cv = la.eigh(content_feature_corrs)
-        zca = np.reciprocal(np.sqrt(cw + fudge))
-        whitener = cv.T @ np.diag(zca) @ cv
-        whitened_features = whitener @ content_features
-    elif whitening == 'pca':
-        whitened_features = (
-            PCA(whiten=True).fit_transform(content_features.T).T
-        )
-    elif whitening == 'cholesky':
-        content_feature_corrs = content_features @ content_features.T
-        cfcdet = la.det(content_feature_corrs)
-        logging.info(f'Content feature corrs det {cfcdet}')
-        c = la.cholesky(content_feature_corrs, lower=True)
-        whitened_features = la.solve_triangular(
-            c, content_features, lower=True, trans=0
-        )
-    elif whitening == 'shrunk':
-        sc = ShrunkCovariance(assume_centered=True).fit(content_features.T)
-        content_feature_prec = sc.get_precision()
-        whitener = la.sqrtm(content_feature_prec)
-        whitened_features = whitener @ content_features
-    elif whitening == 'cholshrunk':
-        sc = ShrunkCovariance(assume_centered=True).fit(content_features.T)
-        content_feature_prec = sc.get_precision()
-        whitener = la.cholesky(content_feature_prec, lower=True)
-        whitened_features = whitener @ content_features
-    elif whitening == 'mcd':
-        mcd = MinCovDet(assume_centered=True).fit(content_features.T)
-        content_feature_prec = mcd.get_precision()
-        whitener = la.sqrtm(content_feature_prec)
-        whitened_features = whitener @ content_features
-    elif whitening == 'cholmcd':
-        mcd = MinCovDet(assume_centered=True).fit(content_features.T)
-        content_feature_prec = mcd.get_precision()
-        whitener = la.cholesky(content_feature_prec, lower=True)
-        whitened_features = whitener @ content_features
-    elif whitening == 'deadranks':
-        chanvitals = np.isclose(content_features, 0).all(axis=1)
-        logging.info(f'Dead content channels: {np.where(chanvitals)}')
-        nzchan_cfs = content_features[~chanvitals, :]
-        content_feature_corrs = nzchan_cfs @ nzchan_cfs.T
-        cfcdet = la.det(content_feature_corrs)
-        logging.info(f'Undeadchan content feature corrs det {cfcdet}')
-        c = la.cholesky(content_feature_corrs, lower=True)
-        whitened_features = la.solve_triangular(
-            c, nzchan_cfs, lower=True, trans=0
-        )
-    else:
-        raise ValueError(f'Invalid whitening={whitening}.')
+    whitened_features = whiten.whiten(
+        content_features, method=whitening, assume_centered=True
+    )
 
     # Coloring transform ----------------------------------------------
     # Center
@@ -181,55 +138,10 @@ def whitening_coloring_transform(
     style_features -= style_feature_means
 
     # Compute coloring
-    if whitening == 'zca':
-        style_feature_corrs = (style_features @ style_features.T)
-        sfcdet = la.det(style_feature_corrs)
-        logging.info(f'Style feature corrs det {sfcdet}')
-        sw, sv = la.eigh(style_feature_corrs)
-        colorizer = sv.T @ np.diag(np.sqrt(sw + fudge)) @ sv
-        wct_features = colorizer @ whitened_features + style_feature_means
-    elif whitening in ('pca', 'cholesky'):
-        style_feature_corrs = style_features @ style_features.T
-        sfcdet = la.det(style_feature_corrs)
-        logging.info(f'Style feature corrs det {sfcdet}')
-        c = la.cholesky(style_feature_corrs, lower=True)
-        colorizer = c
-        wct_features = colorizer @ whitened_features + style_feature_means
-    elif whitening == 'shrunk':
-        sc = ShrunkCovariance(assume_centered=True, store_precision=False).fit(
-            style_features.T
-        )
-        colorizer = la.sqrtm(sc.covariance_)
-        wct_features = colorizer @ whitened_features + style_feature_means
-    elif whitening == 'cholshrunk':
-        sc = ShrunkCovariance(assume_centered=True, store_precision=False).fit(
-            style_features.T
-        )
-        colorizer = la.cholesky(sc.covariance_, lower=True)
-        wct_features = colorizer @ whitened_features + style_feature_means
-    elif whitening == 'mcd':
-        mcd = MinCovDet(assume_centered=True, store_precision=False).fit(
-            style_features.T
-        )
-        colorizer = la.sqrtm(mcd.covariance_)
-        wct_features = colorizer @ whitened_features + style_feature_means
-    elif whitening == 'cholmcd':
-        mcd = MinCovDet(assume_centered=True, store_precision=False).fit(
-            style_features.T
-        )
-        colorizer = la.cholesky(mcd.covariance_, lower=True)
-        wct_features = colorizer @ whitened_features + style_feature_means
-    elif whitening == 'deadranks':
-        chanvitals = np.isclose(style_features, 0).all(axis=1)
-        logging.info(f'Dead style channels: {np.where(chanvitals)}')
-        nzchan_sfs = style_features[~chanvitals, :]
-        style_feature_corrs = nzchan_sfs @ nzchan_sfs.T
-        sfcdet = la.det(style_feature_corrs)
-        logging.info(f'Undeadchan style feature corrs det {sfcdet}')
-        colorizer = la.cholesky(style_feature_corrs, lower=True)
-        wct_features = colorizer @ whitened_features + style_feature_means
-    else:
-        raise ValueError(f'Invalid whitening={whitening}.')
+    colorizer = whiten.coloring_matrix(
+        style_features, method=whitening, assume_centered=True
+    )
+    wct_features = colorizer @ whitened_features + style_feature_means
 
     # Shape back to space x features
     wct_features = wct_features.transpose(1, 0).reshape(*orig_content_shape)
@@ -347,11 +259,7 @@ def feature_transform_style_xfer(
         content_volume.max(),
     )
     logging.info(f'Before rescaling content image, (min,mean,max):{cstats}.')
-    sstats = (
-        style_volume.min(),
-        style_volume.mean(),
-        style_volume.max(),
-    )
+    sstats = (style_volume.min(), style_volume.mean(), style_volume.max())
     logging.info(f'Before rescaling style image, (min,mean,max):{sstats}.')
 
     # Center and scale per FFN
@@ -478,21 +386,7 @@ if __name__ == '__main__':
     )
     flags.DEFINE_string('stylespec', None, 'Target style datspec.')
     flags.DEFINE_string('outspec', None, 'Write output here.')
-    flags.DEFINE_enum(
-        'whitening',
-        'zca',
-        [
-            'zca',
-            'pca',
-            'cholesky',
-            'shrunk',
-            'cholshrunk',
-            'mcd',
-            'cholmcd',
-            'deadranks',
-        ],
-        'What whitening?',
-    )
+    flags.DEFINE_string('whitening', 'zca', 'What whitening?')
 
     # Model flags
     flags.DEFINE_integer('layer', None, 'Depth of encoder/decoder')
