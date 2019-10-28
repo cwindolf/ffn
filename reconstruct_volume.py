@@ -18,6 +18,7 @@ from absl import app
 
 import numpy as np
 import tensorflow as tf
+import multiprocessing
 
 from training import inputs
 from style_xfer import load_encoder, load_decoder
@@ -38,16 +39,26 @@ def reconstruct_volume(
     encoder_ckpt=None,
     image_mean=128.0,
     image_stddev=33.0,
+    fullbyfov=False,
 ):
     '''Make a grid of reconstructions, and visualize it.
     '''
     # Load data -------------------------------------------------------
     logging.info('Loading data')
     volume = dx.loadspec(inspec)
+    volshape = volume.shape
+
+    batch_size = 1
+    if fullbyfov:
+        batch_size = 128
+
     fov_size = volume.shape
-    seed = inputs.fixed_seed_batch(1, fov_size, 0.5, 0.95)
+    if fullbyfov:
+        fov_size = [33, 33, 33]
+
+    seed = inputs.fixed_seed_batch(batch_size, fov_size, 0.5, 0.5)
     if seed_type == 'random':
-        seed = np.random.uniform(0.05, 0.95, size=seed.shape)
+        seed = np.random.uniform(0.05, 0.5, size=seed.shape)
 
     # Rescale, add batch + feature dim
     volume = (volume.astype(np.float32) - image_mean) / image_stddev
@@ -57,7 +68,11 @@ def reconstruct_volume(
     logging.info('Loading encoder')
 
     encoder, encoder_graph, einit_fn = load_encoder(
-        layer, fov_size, ffn_ckpt=ffn_ckpt, encoder_ckpt=encoder_ckpt
+        layer,
+        fov_size,
+        batch_size=batch_size,
+        ffn_ckpt=ffn_ckpt,
+        encoder_ckpt=encoder_ckpt,
     )
 
     # Embed input volumes ----------------------------------------------
@@ -65,19 +80,37 @@ def reconstruct_volume(
         einit_fn(sess)
 
         logging.info('Encoding...')
-        encoding = sess.run(
-            encoder.encoding,
-            feed_dict={
-                encoder.input_patches: volume,
-                encoder.input_seed: seed,
-            },
-        )
+        if fullbyfov:
+            encoding = np.zeros((*volshape, 32))
+            counts = np.zeros(encoding.shape, dtype=int)
+            batches = inputs.batch_by_fovs(volume, fov_size, batch_size)
+            for indices, batch in batches:
+                batch_result = sess.run(
+                    encoder.encoding,
+                    feed_dict={
+                        encoder.input_patches: batch,
+                        encoder.input_seed: seed,
+                    },
+                )
+                for ind, result in zip(indices, batch_result):
+                    encoding[ind] += result
+                    counts[ind] += 1
+
+            encoding = encoding / counts
+        else:
+            encoding = sess.run(
+                encoder.encoding,
+                feed_dict={
+                    encoder.input_patches: volume,
+                    encoder.input_seed: seed,
+                },
+            )
 
     # Load decoder ----------------------------------------------------
     logging.info(f'Loading decoder from {decoder_ckpt}')
 
     decoder, decoder_graph, dinit_fn = load_decoder(
-        layer, fov_size, decoder_ckpt
+        layer, fov_size, decoder_ckpt, batch_size=batch_size
     )
 
     # Decode transformed features -------------------------------------
@@ -85,9 +118,24 @@ def reconstruct_volume(
         dinit_fn(sess)
 
         logging.info('Decoding transformed features')
-        decoded_transform = sess.run(
-            decoder.decoding, feed_dict={decoder.input_encoding: encoding}
-        )
+
+        if fullbyfov:
+            decoded_transform = np.zeros(volshape)
+            counts = np.zeros(decoded_transform.shape, dtype=int)
+            batches = inputs.batch_by_fovs(encoding, fov_size, batch_size)
+            for indices, batch in batches:
+                batch_result = sess.run(
+                    decoder.decoding,
+                    feed_dict={decoder.input_encoding: batch},
+                )
+                for ind, result in zip(indices, batch_result):
+                    decoded_transform[ind] += result.squeeze()
+                    counts[ind] += 1
+            decoded_transform = decoded_transform / counts
+        else:
+            decoded_transform = sess.run(
+                decoder.decoding, feed_dict={decoder.input_encoding: encoding}
+            )
 
     # The final unbatching
     decoded_transform = decoded_transform.squeeze()
@@ -112,6 +160,7 @@ if __name__ == '__main__':
 
     # Model
     flags.DEFINE_integer('layer', None, '')
+    flags.DEFINE_bool('fullbyfov', False, '')
     flags.DEFINE_string('decoder_ckpt', None, '')
     flags.DEFINE_string('encoder_ckpt', None, '')
     flags.DEFINE_string('ffn_ckpt', None, '')
@@ -135,6 +184,7 @@ if __name__ == '__main__':
             ffn_ckpt=FLAGS.ffn_ckpt,
             seed_type=FLAGS.seed_type,
             encoder_ckpt=FLAGS.encoder_ckpt,
+            fullbyfov=FLAGS.fullbyfov,
         )
 
     app.run(_main)

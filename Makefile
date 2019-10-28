@@ -29,7 +29,8 @@ encdechead2inf:
 
 RECDIR=$(CEPHXFER)/rec
 # RECFLAGS=--inspec $(HEAD2MEDGHM) --seed_type random
-RECFLAGS=--inspec $(HEAD2MEDGHM)
+# RECFLAGS=--inspec $(HEAD2MEDGHM)
+RECFLAGS=--inspec $(BMED)[100:262,100:262,100:262] --fullbyfov
 
 .PHONY: reconstruction_grid
 reconstruction_grid: ffn_reconstructions enc_reconstructions
@@ -42,7 +43,7 @@ ffn_reconstructions: ffn2reco ffn3reco ffn5reco ffn7reco
 .PHONY: ffn2reco
 ffn2reco:
 	mkdir -p $(RECDIR)/ffn2reco
-	srun $(CPUSRUNFLAGS) --job-name ffn2reco \
+	srun $(GPUSRUNFLAGS) --job-name ffn2reco \
 		python reconstruct_volume.py \
 			$(RECFLAGS) \
 			--outspec $(RECDIR)/ffn2reco/ffn2reco.h5:raw \
@@ -53,7 +54,7 @@ ffn2reco:
 .PHONY: ffn3reco
 ffn3reco:
 	mkdir -p $(RECDIR)/ffn3reco
-	srun $(CPUSRUNFLAGS) --job-name ffn3reco \
+	srun $(GPUSRUNFLAGS) --job-name ffn3reco \
 		python reconstruct_volume.py \
 			$(RECFLAGS) \
 			--outspec $(RECDIR)/ffn3reco/ffn3reco.h5:raw \
@@ -64,7 +65,7 @@ ffn3reco:
 .PHONY: ffn5reco
 ffn5reco:
 	mkdir -p $(RECDIR)/ffn5reco
-	srun $(CPUSRUNFLAGS) --job-name ffn5reco \
+	srun $(GPUSRUNFLAGS) --job-name ffn5reco \
 		python reconstruct_volume.py \
 			$(RECFLAGS) \
 			--outspec $(RECDIR)/ffn5reco/ffn5reco.h5:raw \
@@ -75,7 +76,7 @@ ffn5reco:
 .PHONY: ffn7reco
 ffn7reco:
 	mkdir -p $(RECDIR)/ffn7reco
-	srun $(CPUSRUNFLAGS) --job-name ffn7reco \
+	srun $(GPUSRUNFLAGS) --job-name ffn7reco \
 		python reconstruct_volume.py \
 			$(RECFLAGS) \
 			--outspec $(RECDIR)/ffn7reco/ffn7reco.h5:raw \
