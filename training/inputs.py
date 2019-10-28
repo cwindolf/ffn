@@ -2,6 +2,7 @@ import numpy as np
 from scipy.special import logit
 from skimage.util import view_as_windows
 import preprocessing.data_util as dx
+import logging
 
 
 def fixed_seed_batch(
@@ -46,7 +47,7 @@ def random_fovs(
 
     # Stride with fov_size to get patches
     all_fovs = view_as_windows(volume, fov_size)
-    n_fovs = all_fovs.shape[0]
+    fovs_per_side = all_fovs.shape[0]
 
     # Add 1 to augmentation axes to avoid batch dim
     pax = bool(permutable_axes)
@@ -61,9 +62,9 @@ def random_fovs(
         # Load
         batch = (
             all_fovs[
-                np.random.randint(n_fovs, size=batch_size),
-                np.random.randint(n_fovs, size=batch_size),
-                np.random.randint(n_fovs, size=batch_size),
+                np.random.randint(fovs_per_side, size=batch_size),
+                np.random.randint(fovs_per_side, size=batch_size),
+                np.random.randint(fovs_per_side, size=batch_size),
             ]
             + 0.0
         )
@@ -75,3 +76,45 @@ def random_fovs(
             batch = np.flip(batch, axis=np.random.choice(reflectable_axes))
 
         yield batch[..., None]
+
+
+def batch_by_fovs(volume, fov_size, batch_size):
+    '''Basically, extract volume patches onto batch dimension
+    '''
+    # Support channel dimension
+    volume = volume.squeeze()
+    if volume.ndim == 4:
+        fov_size = (*fov_size, volume.shape[3])
+
+    # Now yield the batches
+    ilim = volume.shape[0] - fov_size[0]
+    jlim = volume.shape[1] - fov_size[1]
+    klim = volume.shape[2] - fov_size[2] - batch_size
+    logging.info(f'batch_by_fovs: ({ilim},{jlim},{klim}).')
+    for i in range(0, ilim):
+        logging.info(f'{i}/{ilim}')
+        for j in range(0, jlim):
+            for k in range(0, klim, batch_size):
+                islice = slice(i, i + fov_size[0])
+                jslice = slice(j, j + fov_size[1])
+                subvolume = volume[
+                    islice, jslice, k:k + fov_size[2] + batch_size - 1
+                ]
+                subvolume_patches = view_as_windows(subvolume, fov_size)
+                # logging.info(f'subvolume: {subvolume.shape}')
+                # logging.info(f'patches: {subvolume_patches.shape}')
+                # logging.info(f'for fov, batch = {fov_size}, {batch_size}')
+                # assert subvolume_patches.shape[0] == 1
+                # assert subvolume_patches.shape[1] == 1
+                # assert subvolume_patches.shape[2] == batch_size
+                if volume.ndim == 4:
+                    assert subvolume_patches.shape[3] == 1
+                    subvolume_patches = subvolume_patches[:, :, :, 0]
+                slices = [
+                    (islice, jslice, slice(k_, k_ + fov_size[2]))
+                    for k_ in range(k, k + batch_size)
+                ]
+                batch = subvolume_patches[0, 0]
+                if batch.ndim == 4:
+                    batch = batch[..., None]
+                yield slices, batch
