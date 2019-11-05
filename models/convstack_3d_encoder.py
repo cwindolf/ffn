@@ -163,6 +163,7 @@ class ConvStack3DEncoder:
             )
 
     def encode(self, input_fov):
+        '''Add ops to encode another FOV other than the input placeholder.'''
         input_fov_and_seed = tf.concat([input_fov, self.input_seed], axis=4)
         with tf.variable_scope('encoder', reuse=True):
             encoded_fov = convstacktools.peeping_convstack_3d(
@@ -188,6 +189,7 @@ class ConvStack3DEncoder:
         depth=9,
         seed_as_placeholder=False,
     ):
+        '''Load fixed-weight encoder by truncating FFN.'''
         ffn_deltas = [ffn_delta, ffn_delta, ffn_delta]
         encoder_loading_graph = tf.Graph()
         with encoder_loading_graph.as_default():
