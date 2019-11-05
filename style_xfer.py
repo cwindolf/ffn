@@ -325,12 +325,11 @@ def feature_transform_style_xfer(
     else:
         raise ValueError(f'Invalid method={method}.')
 
+    # Report numerical issues
     nans = np.isnan(transformed_features).any()
     logging.info(
         f'Did the feature transform produce NaNs? {"yes" if nans else "no"}'
     )
-
-    # Channel-wise difference
 
     # Batch again
     transformed_features = transformed_features[None, ...]
@@ -347,27 +346,27 @@ def feature_transform_style_xfer(
         dinit_fn(sess)
 
         logging.info('Decoding transformed features')
-        decoded_transform = sess.run(
+        transform_result = sess.run(
             decoder.decoding,
             feed_dict={decoder.input_encoding: transformed_features},
         )
 
     # The final unbatching
-    decoded_transform = decoded_transform.squeeze()
+    transform_result = transform_result.squeeze()
 
     # Un-rescale
-    decoded_transform *= image_stddev
-    decoded_transform += image_mean
+    transform_result *= image_stddev
+    transform_result += image_mean
     dstats = (
-        decoded_transform.min(),
-        decoded_transform.mean(),
-        decoded_transform.max(),
+        transform_result.min(),
+        transform_result.mean(),
+        transform_result.max(),
     )
     logging.info(f'After rescaling the decoding, (min,mean,max):{dstats}.')
 
     # Write to output volume ------------------------------------------
     logging.info(f'Saving result to {outspec}')
-    dx.writespec(outspec, decoded_transform)
+    dx.writespec(outspec, transform_result)
 
 
 # ---------------------------------------------------------------------
