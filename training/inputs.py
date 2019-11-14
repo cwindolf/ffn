@@ -9,6 +9,8 @@ def fixed_seed_batch(
     batch_size, fov_size, seed_pad, seed_init, with_init=True
 ):
     '''A batch of "prior" seeds'''
+    if isinstance(fov_size, int):
+        fov_size = (fov_size, fov_size, fov_size)
     fixed_seed = np.full(fov_size, seed_pad, dtype=np.float32)
     if with_init:
         fov_center = tuple(list(np.array(fov_size) // 2))
@@ -35,12 +37,15 @@ def random_fovs(
     Arguments
     ---------
     volume_spec : datspec pointing to 3d array
-    fov_size : array-like with three ints
+    fov_size : array-like with three ints or one int
         Size of fovs to extract
     permutable_axes : tuple of pairs from (0, 1, 2)
     reflectable_axes : sub-tuple of (0, 1, 2)
         These define augmentations, which are run live batchwise.
     '''
+    if isinstance(fov_size, int):
+        fov_size = (fov_size, fov_size, fov_size)
+
     # Load / preprocess array
     volume = dx.loadspec(volume_spec)
     volume = (volume.astype(np.float32) - image_mean) / image_stddev
