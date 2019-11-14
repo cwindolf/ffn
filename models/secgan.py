@@ -1,5 +1,7 @@
+import numpy as np
 import tensorflow as tf
 from training.models import convstacktools
+from util.ops import center_crop_vol
 from ffn.training.models import convstack_3d
 from ffn.training.optimizer import optimizer_from_flags
 
@@ -19,14 +21,6 @@ def convstack_generator(net, depth=8):
     module was passed through a pointwise convolution layer with a
     single featuremap and ​tanh​ activation function to form the
     generated image.
-
-    TODO: center crop?
-    TODO: deconv ??? how do we get back what valid lost?
-          actually, maybe we just work with the smaller outputs by
-          using larger FOVs to start with?
-          if we start with 33, and use depth 8, that's gonna be tough
-          because we'll run out of pixels. might have to start with
-          input FOVs that are quite large???
     '''
     conv = tf.contrib.layers.conv3d
     with tf.contrib.framework.arg_scope(
@@ -38,15 +32,25 @@ def convstack_generator(net, depth=8):
 
         for i in range(1, depth):
             with tf.name_scope('residual%d' % i):
-                in_net = net
+                # Center crop the residuals
+                in_net = net[:, 2:-2, 2:-2, 2:-2, :]
+
+                # Layers
                 net = tf.nn.relu(net)
                 net = conv(net, scope='conv%d_a' % i)
                 net = conv(net, scope='conv%d_b' % i, activation_fn=None)
-                # TODO: center cropping to match shapes.
+
+                # Add residuals
                 net += in_net
 
     net = tf.nn.relu(net)
-    logits = conv(net, 1, (1, 1, 1), activation_fn='tanh', scope='conv_lom')
+    logits = conv(
+        net,
+        num_outputs=1,
+        kernel_size=(1, 1, 1),
+        activation_fn='tanh',
+        scope='conv_lom',
+    )
 
     return logits
 
@@ -108,19 +112,54 @@ class SECGAN:
     def __init__(
         self,
         batch_size,
-        fov_size,
         ffn_ckpt,
+        generator_conv_clip=16,
+        ffn_fov_shape=(33, 33, 33),
         ffn_depth=12,
         cycle_lambda=2.5,
         generator_lambda=1.0,
         generator_seg_lambda=1.0,
     ):
-        self.input_shape = [batch_size, *fov_size, 1]
+        '''
+        Arguments
+        ---------
+        batch_size : int
+        ffn_ckpt : string
+            Checkpoint of FFN to use for S.
+        generator_conv_clip : int
+            How many pixels do the generators remove from spatial
+            dimension due to their VALID convolutions?
+            16 = 8 blocks * 2 convs per block * 2 pixels per conv
+        ffn_fov_shape : 3 ints
+            Input FOV spatial shape.
+        ffn_depth : int
+            # of conv-residual blocks in the FFN network
+        *_lambda : floats
+            Relative weights of different losses.
+        '''
         self.ffn_depth = ffn_depth
 
         self.cycle_lambda = cycle_lambda
         self.generator_lambda = generator_lambda
         self.generator_seg_lambda = generator_seg_lambda
+
+        # Compute input shapes
+        # Since the generators use VALID padding, we need to
+        # grab more raw data when we're passing through more generators.
+        # Placeholders will be sized by the largest input needed from that
+        # data, and will be center cropped to suit the task.
+        ffn_fov_shape = np.array(ffn_fov_shape)
+        self.ffn_input_shape = [batch_size, *ffn_fov_shape, 1]
+        self.gen_input_shape = [
+            batch_size,
+            *(ffn_fov_shape + generator_conv_clip),
+            1,
+        ]
+        self.cycle_input_shape = [
+            batch_size,
+            *(ffn_fov_shape + 2 * generator_conv_clip),
+            1,
+        ]
 
         # Load up FFN -------------------------------------------------
         self.ffn_weights = self.load_ffn_ckpt(ffn_ckpt)
@@ -144,10 +183,10 @@ class SECGAN:
     def define_tf_graph(self):
         # Set up placeholders -----------------------------------------
         self.input_labeled = tf.placeholder(
-            tf.float32, self.input_shape, 'input_labeled'
+            tf.float32, self.cycle_input_shape, 'input_labeled'
         )
         self.input_unlabeled = tf.placeholder(
-            tf.float32, self.input_shape, 'input_unlabeled'
+            tf.float32, self.gen_input_shape, 'input_unlabeled'
         )
         self.fake_labeled = tf.placeholder(
             tf.float32, self.input_shape, 'fake_labeled'
@@ -198,7 +237,7 @@ class SECGAN:
             D_l_vars = scope.global_variables()
 
         # and for segmentation...
-        with tf.variable_scope('discriminator_D_l') as scope:
+        with tf.variable_scope('discriminator_D_s') as scope:
             D_S_true = resnet18_discriminator(seg_true - 0.5)
             scope.reuse_variables()
             D_S_gen = resnet18_discriminator(seg_gen - 0.5)
