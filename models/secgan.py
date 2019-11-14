@@ -55,7 +55,7 @@ def convstack_generator(net, depth=8):
     return logits
 
 
-def resnet18_discriminator(net):
+def resnet18(net):
     '''
     This proverbial saying probably arose from the pick-purse always
     seizing upon the prey nearest him: his maxim being that of the
@@ -203,6 +203,7 @@ class SECGAN:
         cycle_lambda=2.5,
         generator_lambda=1.0,
         generator_seg_lambda=1.0,
+        input_seed=None,
     ):
         '''
         Arguments
@@ -220,6 +221,9 @@ class SECGAN:
             # of conv-residual blocks in the FFN network
         *_lambda : floats
             Relative weights of different losses.
+        input_seed : None or np.array
+            Pass in a numpy array to store the seed as a constant.
+            Otherwise, feed it into the placeholder self.input_seed.
         '''
         self.ffn_depth = ffn_depth
 
@@ -233,6 +237,7 @@ class SECGAN:
         # Placeholders will be sized by the largest input needed from that
         # data, and will be center cropped to suit the task.
         ffn_fov_shape = np.array(ffn_fov_shape)
+        self.ffn_fov_shape = ffn_fov_shape
         self.ffn_input_shape = [batch_size, *ffn_fov_shape, 1]
         self.gen_input_shape = [
             batch_size,
@@ -247,6 +252,12 @@ class SECGAN:
 
         # Load up FFN -------------------------------------------------
         self.ffn_weights = self.load_ffn_ckpt(ffn_ckpt)
+
+        # Handle seed
+        self.seed_as_placeholder = True
+        if self.input_seed is not None:
+            self.seed_as_placeholder = False
+            self.input_seed = input_seed
 
         # Things to be set to placeholders ----------------------------
         # Real inputs
@@ -269,11 +280,11 @@ class SECGAN:
         self.input_labeled = tf.placeholder(
             tf.float32, self.cycle_input_shape, 'input_labeled'
         )
-        input_labeled_33 = self.input_labeled[:, 16:-16, 16:-16, 16:-16, :]
+        input_labeled_33 = center_crop_vol(self.input_labeled, 8)
         self.input_unlabeled = tf.placeholder(
             tf.float32, self.gen_input_shape, 'input_unlabeled'
         )
-        input_unlabeled_33 = self.input_unlabeled[:, 16:-16, 16:-16, 16:-16, :]
+        input_unlabeled_33 = center_crop_vol(self.input_unlabeled, 8)
         self.fake_labeled = tf.placeholder(
             tf.float32, self.input_shape, 'fake_labeled'
         )
@@ -284,10 +295,10 @@ class SECGAN:
         # Generator ops -----------------------------------------------
         # generator G makes fake unlabeled data
         with tf.variable_scope('generator_G') as scope:
-            self.generated_unlabeled = convstack_generator(self.input_labeled)
-            generated_unlabeled_33 = self.generated_unlabeled[
-                :, 8:-8, 8:-8, 8:-8, :
-            ]
+            generated_unlabeled_49 = convstack_generator(self.input_labeled)
+            self.generated_unlabeled = center_crop_vol(
+                generated_unlabeled_49, 8
+            )
             G_vars = scope.global_variables()
 
         # generator F makes fake labeled data
@@ -295,38 +306,57 @@ class SECGAN:
             self.generated_labeled = convstack_generator(self.input_unlabeled)
             scope.reuse_variables()
             self.cycle_generated_labeled = convstack_generator(
-                self.generated_unlabeled
+                generated_unlabeled_49
             )
             F_vars = scope.global_variables()
 
         # Segmentation ops --------------------------------------------
         with tf.variable_scope('segmentation') as scope:
+            # Handle seed placeholder logic
+            if self.seed_as_placeholder:
+                self.input_seed = tf.placeholder(
+                    tf.float32, shape=self.input_shape, name='input_seed'
+                )
+            else:
+                self.input_seed = tf.constant(self.input_seed)
+
+            # Concatenate segmentation inputs with the seed
+            seg_true_input = tf.concat(
+                [input_labeled_33, self.input_seed], axis=4
+            )
+            seg_fake_input = tf.concat(
+                [self.fake_labeled, self.input_seed], axis=4
+            )
+
+            # Actually build FFN
             seg_true = convstacktools.fixed_convstack_3d(
-                input_labeled_33, self.ffn_weights, depth=self.ffn_depth
+                seg_true_input, self.ffn_weights, depth=self.ffn_depth
             )
             scope.reuse_variables()
-            seg_fake = convstacktools.convstack_3d(self.fake_labeled)
+            seg_fake = convstacktools.convstack_3d(
+                seg_fake_input, depth=self.ffn_depth
+            )
 
         # Discriminator ops -------------------------------------------
         # discriminator for unlabeled data
         with tf.variable_scope('discriminator_D_u') as scope:
-            D_u_true = resnet18_discriminator(self.input_unlabeled)
+            D_u_true = resnet18(input_unlabeled_33)
             scope.reuse_variables()
-            D_u_fake = resnet18_discriminator(self.fake_unlabeled)
+            D_u_fake = resnet18(self.fake_unlabeled)
             D_u_vars = scope.global_variables()
 
         # and for labeled data...
         with tf.variable_scope('discriminator_D_l') as scope:
-            D_l_true = resnet18_discriminator(self.input_labeled)
+            D_l_true = resnet18(self.input_labeled)
             scope.reuse_variables()
-            D_l_fake = resnet18_discriminator(self.fake_labeled)
+            D_l_fake = resnet18(self.fake_labeled)
             D_l_vars = scope.global_variables()
 
         # and for segmentation...
         with tf.variable_scope('discriminator_D_s') as scope:
-            D_S_true = resnet18_discriminator(seg_true - 0.5)
+            D_S_true = resnet18(seg_true - 0.5)
             scope.reuse_variables()
-            D_S_fake = resnet18_discriminator(seg_fake - 0.5)
+            D_S_fake = resnet18(seg_fake - 0.5)
             D_S_vars = scope.global_variables()
 
         # Loss --------------------------------------------------------
@@ -396,7 +426,37 @@ class SECGAN:
                     with tf.control_dependencies([D_u_train_op]):
                         self.train_op = tf.no_op(name='train_everyone')
 
+        # Saving / loading --------------------------------------------
+        all_vars = G_vars + F_vars + D_l_vars + D_u_vars + D_S_vars
+        self.saver = tf.train.Saver(var_list=all_vars)
+
         # Add summaries -----------------------------------------------
+        # the various losses
+        tf.summary.scalar('losses/cycle_consistency', cycle_consistency)
+        tf.summary.scalar('losses/labeled_gan_loss', G_gan_loss)
+        tf.summary.scalar('losses/unlabeled_gan_loss', F_gan_loss)
+        tf.summary.scalar('losses/segmentation_gan_loss', G_seg_gan_loss)
+        tf.summary.scalar('losses/labeled_discriminator_loss', D_l_loss)
+        tf.summary.scalar('losses/unlabeled_discriminator_loss', D_u_loss)
+        tf.summary.scalar('losses/segmentation_discriminator_loss', D_S_loss)
+
+        # Images
+        # cycle: L -> U' -> L''
+        half_fov = self.ffn_fov_shape[0] // 2
+        vis_L = input_labeled_33[:, half_fov, ...]
+        vis_U_ = self.generated_unlabeled[:, half_fov, ...]
+        vis_L__ = self.cycle_generated_labeled[:, half_fov, ...]
+        vis_cycle = tf.concat(
+            [vis_L, vis_U_, vis_L__], axis=2, name='vis_cycle'
+        )
+        tf.summary.image('cycle', vis_cycle)
+
+        # seg bootstrap: U -> L' -> seg
+        vis_U = input_unlabeled_33[:, half_fov, ...]
+        vis_L_ = self.generated_labeled[:, half_fov, ...]
+        vis_seg_ = seg_fake[:, half_fov, ...]
+        vis_seg = tf.concat([vis_U, vis_L_, vis_seg_], axis=2, name='vis_seg')
+        tf.summary.image('unlabeled_seg', vis_seg)
 
     @staticmethod
     def load_ffn_ckpt(
