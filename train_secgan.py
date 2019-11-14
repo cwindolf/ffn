@@ -1,3 +1,4 @@
+import os.path
 import logging
 import tensorflow as tf
 from absl import app
@@ -13,7 +14,7 @@ import preprocessing.data_util as dx
 # Training params
 flags.DEFINE_string('train_dir', None, 'Where to save decoder checkpoints.')
 flags.DEFINE_string('ffn_ckpt', None, 'Load this up as the encoder.')
-flags.DEFINE_string('ffn_fov_size', 33, '')
+flags.DEFINE_integer('ffn_fov_size', 33, '')
 flags.DEFINE_integer('max_steps', 10000, 'Number of decoder train steps.')
 flags.DEFINE_integer('batch_size', 8, 'Simultaneous volumes.')
 
@@ -40,21 +41,18 @@ def train_secgan(
     max_steps=10000,
     batch_size=8,
     ffn_fov_size=33,
-    generator_clip=16,
+    generator_clip=32,
 ):
     '''Run secgan training protocol.'''
     # Load data -------------------------------------------------------
     logging.info('Loading data...')
 
-    labeled_volume = dx.loadspec(labeled_volume_spec)
-    unlabeled_volume = dx.loadspec(unlabeled_volume_spec)
-
     # Make batch generators
-    batches_L = inputs.batch_by_fovs(
-        labeled_volume, ffn_fov_size + 2 * generator_clip
+    batches_L = inputs.random_fovs(
+        labeled_volume_spec, batch_size, ffn_fov_size + 2 * generator_clip
     )
-    batches_U = inputs.batch_by_fovs(
-        unlabeled_volume, ffn_fov_size + generator_clip
+    batches_U = inputs.random_fovs(
+        unlabeled_volume_spec, batch_size, ffn_fov_size + generator_clip
     )
 
     # Make seed
@@ -141,6 +139,10 @@ if __name__ == '__main__':
     )
 
     def main(argv):
+        with open(
+            os.path.join(FLAGS.train_dir, 'flagfile.txt'), 'w'
+        ) as flagfile:
+            flagfile.write(FLAGS.flags_into_string())
         train_secgan(
             FLAGS.labeled_volume_spec,
             FLAGS.unlabeled_volume_spec,

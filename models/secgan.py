@@ -1,6 +1,7 @@
+import logging
 import numpy as np
 import tensorflow as tf
-from training.models import convstacktools
+from models import convstacktools
 from util.ops import center_crop_vol
 from ffn.training.models import convstack_3d
 from ffn.training.optimizer import optimizer_from_flags
@@ -48,8 +49,8 @@ def convstack_generator(net, depth=8):
         net,
         num_outputs=1,
         kernel_size=(1, 1, 1),
-        activation_fn='tanh',
-        scope='conv_lom',
+        activation_fn=tf.tanh,
+        scope='gen_output',
     )
 
     return logits
@@ -81,7 +82,6 @@ def resnet18(net):
     with tf.variable_scope('conv1'):
         net = conv(
             net,
-            activation_fn='relu',
             scope='conv1',
             num_outputs=64,
             stride=[2, 2, 2],
@@ -104,13 +104,13 @@ def resnet18(net):
     ):
         with tf.variable_scope('conv2_1'):
             shortcut = net
-            net = conv(net, activation_fn='relu', scope='conv1')
+            net = conv(net, scope='conv1')
             net = conv(net, activation_fn=None, scope='conv2')
             net = net + shortcut
             net = tf.nn.relu(net)
         with tf.variable_scope('conv2_2'):
             shortcut = net
-            net = conv(net, activation_fn='relu', scope='conv1')
+            net = conv(net, scope='conv1')
             net = conv(net, activation_fn=None, scope='conv2')
             net = net + shortcut
             net = tf.nn.relu(net)
@@ -118,17 +118,13 @@ def resnet18(net):
     # basic res layer 128 outputs, 2 repeats, stride 2
     # basic res layer 256 outputs, 2 repeats, stride 2
     # basic res layer 512 outputs, 2 repeats, stride 2
-    for layer, channels in enumerate((12, 256, 512), start=3):
+    for layer, channels in enumerate((128, 256, 512), start=3):
         with tf.contrib.framework.arg_scope(
             [conv], num_outputs=channels, kernel_size=(3, 3, 3), padding='SAME'
         ):
             with tf.variable_scope(f'conv{layer}_1'):
-                shortcut = tf.nn.max_pool3d(
-                    net, [1, 2, 2, 2, 1], [1, 2, 2, 2, 1], 'SAME'
-                )
-                net = conv(
-                    net, activation_fn='relu', scope='conv1', stride=(2, 2, 2)
-                )
+                shortcut = conv(net, kernel_size=(1, 1, 1), stride=(2, 2, 2))
+                net = conv(net, scope='conv1', stride=(2, 2, 2))
                 net = conv(
                     net, activation_fn=None, scope='conv2', stride=(1, 1, 1)
                 )
@@ -136,9 +132,7 @@ def resnet18(net):
                 net = tf.nn.relu(net)
             with tf.variable_scope(f'conv{layer}_2'):
                 shortcut = net
-                net = conv(
-                    net, activation_fn='relu', scope='conv1', stride=(1, 1, 1)
-                )
+                net = conv(net, scope='conv1', stride=(1, 1, 1))
                 net = conv(
                     net, activation_fn=None, scope='conv2', stride=(1, 1, 1)
                 )
@@ -151,7 +145,7 @@ def resnet18(net):
 
         # linear output layer
         probs = tf.contrib.layers.fully_connected(
-            net, 1, activation_fn='sigmoid'
+            net, 1, activation_fn=tf.sigmoid
         )
 
     return probs
@@ -197,7 +191,7 @@ class SECGAN:
         self,
         batch_size,
         ffn_ckpt,
-        generator_conv_clip=16,
+        generator_conv_clip=32,
         ffn_fov_shape=(33, 33, 33),
         ffn_depth=12,
         cycle_lambda=2.5,
@@ -226,6 +220,7 @@ class SECGAN:
             Otherwise, feed it into the placeholder self.input_seed.
         '''
         self.ffn_depth = ffn_depth
+        self.generator_conv_clip = generator_conv_clip
 
         self.cycle_lambda = cycle_lambda
         self.generator_lambda = generator_lambda
@@ -251,11 +246,13 @@ class SECGAN:
         ]
 
         # Load up FFN -------------------------------------------------
-        self.ffn_weights = self.load_ffn_ckpt(ffn_ckpt)
+        self.ffn_weights = self.load_ffn_ckpt(
+            ffn_ckpt, ffn_fov_shape, batch_size
+        )
 
         # Handle seed
         self.seed_as_placeholder = True
-        if self.input_seed is not None:
+        if input_seed is not None:
             self.seed_as_placeholder = False
             self.input_seed = input_seed
 
@@ -280,16 +277,18 @@ class SECGAN:
         self.input_labeled = tf.placeholder(
             tf.float32, self.cycle_input_shape, 'input_labeled'
         )
-        input_labeled_33 = center_crop_vol(self.input_labeled, 8)
+        logging.info(f' - Input labeled shape {self.input_labeled.shape}')
+        input_labeled_33 = center_crop_vol(self.input_labeled, self.generator_conv_clip)
         self.input_unlabeled = tf.placeholder(
             tf.float32, self.gen_input_shape, 'input_unlabeled'
         )
-        input_unlabeled_33 = center_crop_vol(self.input_unlabeled, 8)
+        logging.info(f' - Input unlabeled shape {self.input_unlabeled.shape}')
+        input_unlabeled_33 = center_crop_vol(self.input_unlabeled, self.generator_conv_clip // 2)
         self.fake_labeled = tf.placeholder(
-            tf.float32, self.input_shape, 'fake_labeled'
+            tf.float32, self.ffn_input_shape, 'fake_labeled'
         )
         self.fake_unlabeled = tf.placeholder(
-            tf.float32, self.input_shape, 'fake_unlabeled'
+            tf.float32, self.ffn_input_shape, 'fake_unlabeled'
         )
 
         # Generator ops -----------------------------------------------
@@ -297,16 +296,26 @@ class SECGAN:
         with tf.variable_scope('generator_G') as scope:
             generated_unlabeled_49 = convstack_generator(self.input_labeled)
             self.generated_unlabeled = center_crop_vol(
-                generated_unlabeled_49, 8
+                generated_unlabeled_49, self.generator_conv_clip // 2
+            )
+            logging.info(
+                f' - Generated unlabeled shape {generated_unlabeled_49.shape}'
             )
             G_vars = scope.global_variables()
 
         # generator F makes fake labeled data
         with tf.variable_scope('generator_F') as scope:
             self.generated_labeled = convstack_generator(self.input_unlabeled)
+            logging.info(
+                f' - Generated labeled shape {self.generated_labeled.shape}'
+            )
             scope.reuse_variables()
             self.cycle_generated_labeled = convstack_generator(
                 generated_unlabeled_49
+            )
+            logging.info(
+                ' - Cycle generated labeled shape '
+                f'{self.cycle_generated_labeled.shape}'
             )
             F_vars = scope.global_variables()
 
@@ -315,7 +324,7 @@ class SECGAN:
             # Handle seed placeholder logic
             if self.seed_as_placeholder:
                 self.input_seed = tf.placeholder(
-                    tf.float32, shape=self.input_shape, name='input_seed'
+                    tf.float32, shape=self.ffn_input_shape, name='input_seed'
                 )
             else:
                 self.input_seed = tf.constant(self.input_seed)
@@ -333,8 +342,8 @@ class SECGAN:
                 seg_true_input, self.ffn_weights, depth=self.ffn_depth
             )
             scope.reuse_variables()
-            seg_fake = convstacktools.convstack_3d(
-                seg_fake_input, depth=self.ffn_depth
+            seg_fake = convstacktools.fixed_convstack_3d(
+                seg_fake_input, self.ffn_weights, depth=self.ffn_depth
             )
 
         # Discriminator ops -------------------------------------------
@@ -399,28 +408,25 @@ class SECGAN:
         # Get some train ops
         # The fact is, everyone needs their own global step.
         # They specify this ordering, why not, let's enforce it.
+        global_step = tf.train.get_or_create_global_step()
         G_train_op = G_optimizer.minimize(
             G_total_loss,
-            global_step=tf.Variable(0, trainable=False),
             var_list=G_vars,
         )
         with tf.control_dependencies([G_train_op]):
             D_S_and_l_train_op = D_S_and_l_optimizer.minimize(
                 D_S_and_l_total_loss,
-                global_step=tf.Variable(
-                    0, trainable=False, var_list=(D_S_vars + D_l_vars)
-                ),
+                var_list=(D_S_vars + D_l_vars),
             )
             with tf.control_dependencies([D_S_and_l_train_op]):
                 F_train_op = F_optimizer.minimize(
                     F_total_loss,
-                    global_step=tf.Variable(0, trainable=False),
+                    global_step=global_step,
                     var_list=F_vars,
                 )
                 with tf.control_dependencies([F_train_op]):
                     D_u_train_op = D_u_optimizer.minimize(
                         D_u_loss,
-                        global_step=tf.Variable(0, trainable=False),
                         var_list=D_u_vars,
                     )
                     with tf.control_dependencies([D_u_train_op]):
@@ -459,9 +465,7 @@ class SECGAN:
         tf.summary.image('unlabeled_seg', vis_seg)
 
     @staticmethod
-    def load_ffn_ckpt(
-        ffn_ckpt, fov_size, batch_size, decoder_ckpt, layer, depth=9
-    ):
+    def load_ffn_ckpt(ffn_ckpt, fov_size, batch_size, depth=12):
         # The deltas are not important at all.
         ffn_deltas = [1, 1, 1]
         ffn_loading_graph = tf.Graph()
