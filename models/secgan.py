@@ -69,19 +69,92 @@ def resnet18_discriminator(net):
     average pooling preceding it, and used the output of the last
     residual module directly, which we found necessary for the
     network to train stably.
+
+    Following original lua impl:
+    github.com/facebookarchive/fb.resnet.torch/blob/master/models/resnet.lua
+    and
+    https://github.com/dalgu90/resnet-18-tensorflow/blob/master/resnet.py
     '''
     conv = tf.contrib.layers.conv3d
-    with tf.contrib.framework.arg_scope(padding='VALID'):
-        # conv1
+
+    # conv1
+    with tf.variable_scope('conv1'):
         net = conv(
             net,
+            activation_fn='relu',
             scope='conv1',
             num_outputs=64,
             stride=[2, 2, 2],
             kernel_size=[7, 7, 7],
+            padding='SAME',
         )
 
-        #
+        # max pool 3x3 blocks, stride 2, zero pad 1 px
+        net = tf.nn.max_pool3d(
+            net, ksize=[1, 3, 3, 3, 1], strides=[1, 2, 2, 2, 1], padding='SAME'
+        )
+
+    # basic res layer 64 outputs, 2 repeats, stride 1
+    with tf.contrib.framework.arg_scope(
+        [conv],
+        num_outputs=64,
+        kernel_size=(3, 3, 3),
+        padding='SAME',
+        stride=(1, 1, 1),
+    ):
+        with tf.variable_scope('conv2_1'):
+            shortcut = net
+            net = conv(net, activation_fn='relu', scope='conv1')
+            net = conv(net, activation_fn=None, scope='conv2')
+            net = net + shortcut
+            net = tf.nn.relu(net)
+        with tf.variable_scope('conv2_2'):
+            shortcut = net
+            net = conv(net, activation_fn='relu', scope='conv1')
+            net = conv(net, activation_fn=None, scope='conv2')
+            net = net + shortcut
+            net = tf.nn.relu(net)
+
+    # basic res layer 128 outputs, 2 repeats, stride 2
+    # basic res layer 256 outputs, 2 repeats, stride 2
+    # basic res layer 512 outputs, 2 repeats, stride 2
+    for layer, channels in enumerate((12, 256, 512), start=3):
+        with tf.contrib.framework.arg_scope(
+            [conv], num_outputs=channels, kernel_size=(3, 3, 3), padding='SAME'
+        ):
+            with tf.variable_scope(f'conv{layer}_1'):
+                shortcut = tf.nn.max_pool3d(
+                    net, [1, 2, 2, 2, 1], [1, 2, 2, 2, 1], 'SAME'
+                )
+                net = conv(
+                    net, activation_fn='relu', scope='conv1', stride=(2, 2, 2)
+                )
+                net = conv(
+                    net, activation_fn=None, scope='conv2', stride=(1, 1, 1)
+                )
+                net = net + shortcut
+                net = tf.nn.relu(net)
+            with tf.variable_scope(f'conv{layer}_2'):
+                shortcut = net
+                net = conv(
+                    net, activation_fn='relu', scope='conv1', stride=(1, 1, 1)
+                )
+                net = conv(
+                    net, activation_fn=None, scope='conv2', stride=(1, 1, 1)
+                )
+                net = net + shortcut
+                net = tf.nn.relu(net)
+
+    with tf.variable_scope('probs'):
+        # total spatial average pooling
+        net = tf.reduce_mean(net, axis=(1, 2, 3))
+
+        # linear output layer
+        probs = tf.contrib.layers.fully_connected(
+            net, 1, activation_fn='sigmoid'
+        )
+
+    return probs
 
 
 # ------------------------------ SECGAN -----------------------------
@@ -90,23 +163,34 @@ def resnet18_discriminator(net):
 class SECGAN:
     '''Segmentation-enhanced CycleGAN
 
-    Januszewski, Jain, 2019:
+    M. Januszewski + V. Jain, 2019:
     https://www.biorxiv.org/content/10.1101/548081v1
 
     Setting up some notation here for reference when reading
     the code below.
 
     Generators:
+    -----------
         - G : { labeled } -> { unlabeled }
         - F : { unlabeled } -> { labeled }
+    The VALID padding means that the output of these is 16 voxels
+    smaller than the input on all spatial dims. So, we'll need to
+    take in inputs that are larger than the regions we really care
+    about, and occasionally center crop to make shapes work out.
 
     Discriminators:
-        - D_l : { labeled-ish } -> [0, 1]
-        - D_u : { unlabeled-ish } -> [0, 1]
+    ---------------
+        - D_l : { labeled } + { labeled-ish } -> [0, 1]
+        - D_u : { unlabeled } + { unlabeled-ish } -> [0, 1]
         - D_S : { segmentation } -> [0, 1]
+    In this first attempt, we will choose to have the discriminators
+    take in input which is the same size as the FFN's input, 33^3. So,
+    generators that are generating input for these discriminators will
+    need to take in input at least 49^3.
 
     Segmenter:
-        - S : { labled-ish } -> { segmentation }
+    ----------
+        - S : {labeled} + { labeled-ish } -> { segmentation }
     '''
 
     def __init__(
@@ -166,28 +250,30 @@ class SECGAN:
 
         # Things to be set to placeholders ----------------------------
         # Real inputs
-        self.input_labeled = None
-        self.input_unlabeled = None
+        self.input_labeled = None  # 65
+        self.input_unlabeled = None  # 49
 
         # Fake inputs to fool discriminator
         # TODO: During training, take from a pool of recent output rather
         #       than just the last timestep.
-        self.fake_labeled = None
-        self.fake_unlabeled = None
+        self.fake_labeled = None  # 33
+        self.fake_unlabeled = None  # 33
 
         # Things which will be output by net --------------------------
-        self.generated_labeled = None
-        self.cycle_generated_labeled = None
-        self.generated_unlabeled = None
+        self.generated_labeled = None  # 33
+        self.cycle_generated_labeled = None  # 33
+        self.generated_unlabeled = None  # 33
 
     def define_tf_graph(self):
         # Set up placeholders -----------------------------------------
         self.input_labeled = tf.placeholder(
             tf.float32, self.cycle_input_shape, 'input_labeled'
         )
+        input_labeled_33 = self.input_labeled[:, 16:-16, 16:-16, 16:-16, :]
         self.input_unlabeled = tf.placeholder(
             tf.float32, self.gen_input_shape, 'input_unlabeled'
         )
+        input_unlabeled_33 = self.input_unlabeled[:, 16:-16, 16:-16, 16:-16, :]
         self.fake_labeled = tf.placeholder(
             tf.float32, self.input_shape, 'fake_labeled'
         )
@@ -199,6 +285,9 @@ class SECGAN:
         # generator G makes fake unlabeled data
         with tf.variable_scope('generator_G') as scope:
             self.generated_unlabeled = convstack_generator(self.input_labeled)
+            generated_unlabeled_33 = self.generated_unlabeled[
+                :, 8:-8, 8:-8, 8:-8, :
+            ]
             G_vars = scope.global_variables()
 
         # generator F makes fake labeled data
@@ -213,10 +302,9 @@ class SECGAN:
         # Segmentation ops --------------------------------------------
         with tf.variable_scope('segmentation') as scope:
             seg_true = convstacktools.fixed_convstack_3d(
-                self.input_labeled, self.ffn_weights, depth=self.ffn_depth
+                input_labeled_33, self.ffn_weights, depth=self.ffn_depth
             )
             scope.reuse_variables()
-            seg_gen = convstacktools.convstack_3d(self.generated_labeled)
             seg_fake = convstacktools.convstack_3d(self.fake_labeled)
 
         # Discriminator ops -------------------------------------------
@@ -224,7 +312,6 @@ class SECGAN:
         with tf.variable_scope('discriminator_D_u') as scope:
             D_u_true = resnet18_discriminator(self.input_unlabeled)
             scope.reuse_variables()
-            D_u_gen = resnet18_discriminator(self.generated_unlabeled)
             D_u_fake = resnet18_discriminator(self.fake_unlabeled)
             D_u_vars = scope.global_variables()
 
@@ -232,7 +319,6 @@ class SECGAN:
         with tf.variable_scope('discriminator_D_l') as scope:
             D_l_true = resnet18_discriminator(self.input_labeled)
             scope.reuse_variables()
-            D_l_gen = resnet18_discriminator(self.generated_labeled)
             D_l_fake = resnet18_discriminator(self.fake_labeled)
             D_l_vars = scope.global_variables()
 
@@ -240,18 +326,17 @@ class SECGAN:
         with tf.variable_scope('discriminator_D_s') as scope:
             D_S_true = resnet18_discriminator(seg_true - 0.5)
             scope.reuse_variables()
-            D_S_gen = resnet18_discriminator(seg_gen - 0.5)
             D_S_fake = resnet18_discriminator(seg_fake - 0.5)
             D_S_vars = scope.global_variables()
 
         # Loss --------------------------------------------------------
         # Loss for generators
         cycle_consistency = tf.reduce_mean(
-            tf.abs(self.cycle_generated_labeled - self.input_labeled)
+            tf.abs(self.cycle_generated_labeled - input_labeled_33)
         )
-        G_gan_loss = tf.reduce_mean(tf.square(D_u_gen - 1))
-        G_seg_gan_loss = tf.reduce_mean(tf.square(D_S_gen - 1))
-        F_gan_loss = tf.reduce_mean(tf.square(D_l_gen - 1))
+        G_gan_loss = tf.reduce_mean(tf.square(D_u_fake - 1))
+        G_seg_gan_loss = tf.reduce_mean(tf.square(D_S_fake - 1))
+        F_gan_loss = tf.reduce_mean(tf.square(D_l_fake - 1))
         G_total_loss = (
             self.cycle_lambda * cycle_consistency
             + self.generator_lambda * G_gan_loss
