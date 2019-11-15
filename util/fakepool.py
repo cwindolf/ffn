@@ -15,9 +15,15 @@ class FakePool:
     def __init__(self, pool_size=64):
         self.size = pool_size
         self.pool = []
+        self.never_queried = True
 
     def query(self, fakes):
         if self.size == 0:
+            return fakes
+
+        if self.never_queried:
+            self.pool = [fake for fake in fakes]
+            self.never_queried = False
             return fakes
 
         choices = []
