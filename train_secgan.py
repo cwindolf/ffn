@@ -82,8 +82,10 @@ def train_secgan(
         logging.info('Building graph...')
         secgan.define_tf_graph()
 
+        # Training machinery
         scaffold = tf.train.Scaffold(
-            saver=secgan.saver, summary_op=tf.summary.merge_all()
+            saver=secgan.saver,
+            summary_op=tf.summary.merge_all()
         )
         config = tf.ConfigProto(
             log_device_placement=False, allow_soft_placement=True
@@ -95,7 +97,6 @@ def train_secgan(
             save_summaries_secs=30,
             save_checkpoint_secs=600,
         ) as sess:
-            # Train decoder
             for i, (batch_L, batch_U) in enumerate(zip(batches_L, batches_U)):
                 # get previously generated images
                 gen_L, gen_U = sess.run(

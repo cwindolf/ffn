@@ -45,6 +45,7 @@ def fixed_convstack_3d(net, weights, depth=9):
         kernel_size=(3, 3, 3),
         padding='SAME',
         trainable=False,
+        variables_collections=[tf.GraphKeys.LOCAL_VARIABLES],
     ):
         net = conv(
             net,
