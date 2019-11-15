@@ -27,7 +27,8 @@ flags.DEFINE_string(
 )
 
 # Model?
-flags.DEFINE_float('cycle_lambda', 2.5, '')
+flags.DEFINE_float('cycle_l_lambda', 2.0, '')
+flags.DEFINE_float('cycle_u_lambda', 0.5, '')
 flags.DEFINE_string('generator_norm', None, '')
 flags.DEFINE_string('discriminator_norm', 'instance', '')
 
@@ -46,7 +47,8 @@ def train_secgan(
     ffn_fov_size=33,
     ffn_depth=12,
     generator_clip=32,
-    cycle_lambda=2.5,
+    cycle_l_lambda=2.0,
+    cycle_u_lambda=0.5,
     generator_lambda=1.0,
     generator_seg_lambda=1.0,
     generator_norm=None,
@@ -83,7 +85,8 @@ def train_secgan(
         generator_conv_clip=generator_clip,
         ffn_fov_shape=(ffn_fov_size, ffn_fov_size, ffn_fov_size),
         ffn_depth=ffn_depth,
-        cycle_lambda=cycle_lambda,
+        cycle_l_lambda=cycle_l_lambda,
+        cycle_u_lambda=cycle_u_lambda,
         generator_lambda=generator_lambda,
         generator_seg_lambda=generator_seg_lambda,
         input_seed=seed,
@@ -156,7 +159,8 @@ if __name__ == '__main__':
             max_steps=FLAGS.max_steps,
             batch_size=FLAGS.batch_size,
             ffn_fov_size=FLAGS.ffn_fov_size,
-            cycle_lambda=FLAGS.cycle_lambda,
+            cycle_l_lambda=FLAGS.cycle_l_lambda,
+            cycle_u_lambda=FLAGS.cycle_u_lambda,
             generator_norm=FLAGS.generator_norm,
             discriminator_norm=FLAGS.discriminator_norm,
         )

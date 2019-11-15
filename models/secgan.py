@@ -108,7 +108,7 @@ class SECGAN:
         - S : {labeled} + { labeled-ish } -> { segmentation }
     '''
 
-    SEEMS_REAL = 0.9
+    SEEMS_REAL = 1.0
 
     def __init__(
         self,
@@ -117,7 +117,8 @@ class SECGAN:
         generator_conv_clip=32,
         ffn_fov_shape=(33, 33, 33),
         ffn_depth=12,
-        cycle_lambda=2.5,
+        cycle_l_lambda=2.0,
+        cycle_u_lambda=0.5,
         generator_lambda=1.0,
         generator_seg_lambda=1.0,
         input_seed=None,
@@ -147,7 +148,8 @@ class SECGAN:
         self.ffn_depth = ffn_depth
         self.generator_conv_clip = generator_conv_clip
 
-        self.cycle_lambda = cycle_lambda
+        self.cycle_l_lambda = cycle_l_lambda
+        self.cycle_u_lambda = cycle_u_lambda
         self.generator_lambda = generator_lambda
         self.generator_seg_lambda = generator_seg_lambda
 
@@ -322,7 +324,6 @@ class SECGAN:
         cycle_consistency_u = tf.reduce_mean(
             tf.abs(self.cycle_generated_unlabeled - input_unlabeled_smol)
         )
-        cycle_consistency = 0.5 * (cycle_consistency_l + cycle_consistency_u)
         G_gan_loss = tf.reduce_mean(
             tf.squared_difference(D_u_fake, self.SEEMS_REAL)
         )
@@ -333,12 +334,14 @@ class SECGAN:
             tf.squared_difference(D_l_fake, self.SEEMS_REAL)
         )
         G_total_loss = (
-            self.cycle_lambda * cycle_consistency
+            self.cycle_l_lambda * cycle_consistency_l
+            + self.cycle_u_lambda * cycle_consistency_u
             + self.generator_lambda * G_gan_loss
             + self.generator_seg_lambda * G_seg_gan_loss
         )
         F_total_loss = (
-            self.cycle_lambda * cycle_consistency
+            self.cycle_l_lambda * cycle_consistency_l
+            + self.cycle_u_lambda * cycle_consistency_u
             + self.generator_lambda * F_gan_loss
         )
 
@@ -389,7 +392,6 @@ class SECGAN:
         # the various losses
         tf.summary.scalar('losses/cycle_consistency_l', cycle_consistency_l)
         tf.summary.scalar('losses/cycle_consistency_u', cycle_consistency_u)
-        tf.summary.scalar('losses/cycle_consistency', cycle_consistency)
         tf.summary.scalar('losses/labeled_gan_loss', G_gan_loss)
         tf.summary.scalar('losses/unlabeled_gan_loss', F_gan_loss)
         tf.summary.scalar('losses/segmentation_gan_loss', G_seg_gan_loss)
