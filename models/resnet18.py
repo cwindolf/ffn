@@ -123,7 +123,7 @@ def resnet18(net, norm='instance', early_maxpool=False):
 
         # linear output layer
         probs = tf.contrib.layers.fully_connected(
-            net, 1, activation_fn=tf.sigmoid
+            net, 1, activation_fn=None
         )
 
     logging.info(f' - Shape of probs: {probs.shape}')
