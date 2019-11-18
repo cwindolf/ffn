@@ -17,6 +17,7 @@ flags.DEFINE_string('ffn_ckpt', None, 'Load this up as the encoder.')
 flags.DEFINE_integer('ffn_fov_size', 33, '')
 flags.DEFINE_integer('max_steps', 10000, 'Number of decoder train steps.')
 flags.DEFINE_integer('batch_size', 8, 'Simultaneous volumes.')
+flags.DEFINE_integer('fakepool_sz', 64, '')
 
 # Data
 flags.DEFINE_string(
@@ -27,11 +28,16 @@ flags.DEFINE_string(
 )
 
 # Model?
+flags.DEFINE_string('discriminator', 'resnet18', '')
 flags.DEFINE_float('cycle_l_lambda', 2.5, '')
 flags.DEFINE_float('cycle_u_lambda', 0.5, '')
+flags.DEFINE_float('generator_lambda', 1.0, '')
 flags.DEFINE_string('generator_norm', None, '')
 flags.DEFINE_string('discriminator_norm', 'instance', '')
 flags.DEFINE_boolean('disc_early_maxpool', False, '')
+flags.DEFINE_boolean('seg_enhanced', True, '')
+flags.DEFINE_integer('convdisc_depth', 3, '')
+flags.DEFINE_integer('generator_depth', 8, '')
 
 
 FLAGS = flags.FLAGS
@@ -47,7 +53,7 @@ def train_secgan(
     batch_size=8,
     ffn_fov_size=33,
     ffn_depth=12,
-    generator_clip=32,
+    generator_clip=4,
     cycle_l_lambda=2.0,
     cycle_u_lambda=0.5,
     generator_lambda=1.0,
@@ -55,6 +61,11 @@ def train_secgan(
     generator_norm=None,
     discriminator_norm='instance',
     disc_early_maxpool=False,
+    fakepool_sz=64,
+    discriminator='resnet18',
+    convdisc_depth=3,
+    generator_depth=8,
+    seg_enhanced=True,
 ):
     '''Run secgan training protocol.'''
     # Load data -------------------------------------------------------
@@ -62,10 +73,14 @@ def train_secgan(
 
     # Make batch generators
     batches_L = inputs.random_fovs(
-        labeled_volume_spec, batch_size, ffn_fov_size + 2 * generator_clip
+        labeled_volume_spec,
+        batch_size,
+        ffn_fov_size + 2 * generator_clip * generator_depth,
     )
     batches_U = inputs.random_fovs(
-        unlabeled_volume_spec, batch_size, ffn_fov_size + 2 * generator_clip
+        unlabeled_volume_spec,
+        batch_size,
+        ffn_fov_size + 2 * generator_clip * generator_depth,
     )
 
     # Make seed
@@ -95,6 +110,10 @@ def train_secgan(
         generator_norm=generator_norm,
         discriminator_norm=discriminator_norm,
         disc_early_maxpool=disc_early_maxpool,
+        discriminator=discriminator,
+        convdisc_depth=convdisc_depth,
+        generator_depth=generator_depth,
+        seg_enhanced=seg_enhanced,
     )
 
     # Enter TF world --------------------------------------------------
@@ -164,9 +183,15 @@ if __name__ == '__main__':
             ffn_fov_size=FLAGS.ffn_fov_size,
             cycle_l_lambda=FLAGS.cycle_l_lambda,
             cycle_u_lambda=FLAGS.cycle_u_lambda,
+            generator_lambda=FLAGS.generator_lambda,
             generator_norm=FLAGS.generator_norm,
             discriminator_norm=FLAGS.discriminator_norm,
             disc_early_maxpool=FLAGS.disc_early_maxpool,
+            fakepool_sz=FLAGS.fakepool_sz,
+            discriminator=FLAGS.discriminator,
+            generator_depth=FLAGS.generator_depth,
+            convdisc_depth=FLAGS.convdisc_depth,
+            seg_enhanced=FLAGS.seg_enhanced,
         )
 
     app.run(main)
