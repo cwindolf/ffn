@@ -27,10 +27,11 @@ flags.DEFINE_string(
 )
 
 # Model?
-flags.DEFINE_float('cycle_l_lambda', 2.0, '')
+flags.DEFINE_float('cycle_l_lambda', 2.5, '')
 flags.DEFINE_float('cycle_u_lambda', 0.5, '')
 flags.DEFINE_string('generator_norm', None, '')
 flags.DEFINE_string('discriminator_norm', 'instance', '')
+flags.DEFINE_boolean('disc_early_maxpool', False, '')
 
 
 FLAGS = flags.FLAGS
@@ -53,6 +54,7 @@ def train_secgan(
     generator_seg_lambda=1.0,
     generator_norm=None,
     discriminator_norm='instance',
+    disc_early_maxpool=False,
 ):
     '''Run secgan training protocol.'''
     # Load data -------------------------------------------------------
@@ -92,6 +94,7 @@ def train_secgan(
         input_seed=seed,
         generator_norm=generator_norm,
         discriminator_norm=discriminator_norm,
+        disc_early_maxpool=disc_early_maxpool,
     )
 
     # Enter TF world --------------------------------------------------
@@ -163,6 +166,7 @@ if __name__ == '__main__':
             cycle_u_lambda=FLAGS.cycle_u_lambda,
             generator_norm=FLAGS.generator_norm,
             discriminator_norm=FLAGS.discriminator_norm,
+            disc_early_maxpool=FLAGS.disc_early_maxpool,
         )
 
     app.run(main)

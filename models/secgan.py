@@ -124,6 +124,7 @@ class SECGAN:
         input_seed=None,
         generator_norm=None,
         discriminator_norm='instance',
+        disc_early_maxpool=False,
     ):
         '''
         Arguments
@@ -155,6 +156,7 @@ class SECGAN:
 
         self.gnorm = generator_norm
         self.dnorm = discriminator_norm
+        self.disc_early_maxpool = disc_early_maxpool
 
         # Compute input shapes
         # Since the generators use VALID padding, we need to
@@ -297,23 +299,47 @@ class SECGAN:
         # Discriminator ops -------------------------------------------
         # discriminator for unlabeled data
         with tf.variable_scope('discriminator_D_u') as scope:
-            D_u_true = resnet18(input_unlabeled_smol, norm=self.dnorm)
+            D_u_true = resnet18(
+                input_unlabeled_smol,
+                norm=self.dnorm,
+                early_maxpool=self.disc_early_maxpool,
+            )
             scope.reuse_variables()
-            D_u_fake = resnet18(self.fake_unlabeled, norm=self.dnorm)
+            D_u_fake = resnet18(
+                self.fake_unlabeled,
+                norm=self.dnorm,
+                early_maxpool=self.disc_early_maxpool,
+            )
             D_u_vars = scope.global_variables()
 
         # and for labeled data...
         with tf.variable_scope('discriminator_D_l') as scope:
-            D_l_true = resnet18(self.input_labeled, norm=self.dnorm)
+            D_l_true = resnet18(
+                self.input_labeled,
+                norm=self.dnorm,
+                early_maxpool=self.disc_early_maxpool,
+            )
             scope.reuse_variables()
-            D_l_fake = resnet18(self.fake_labeled, norm=self.dnorm)
+            D_l_fake = resnet18(
+                self.fake_labeled,
+                norm=self.dnorm,
+                early_maxpool=self.disc_early_maxpool,
+            )
             D_l_vars = scope.global_variables()
 
         # and for segmentation...
         with tf.variable_scope('discriminator_D_s') as scope:
-            D_S_true = resnet18(seg_true - 0.5, norm=self.dnorm)
+            D_S_true = resnet18(
+                seg_true - 0.5,
+                norm=self.dnorm,
+                early_maxpool=self.disc_early_maxpool,
+            )
             scope.reuse_variables()
-            D_S_fake = resnet18(seg_fake - 0.5, norm=self.dnorm)
+            D_S_fake = resnet18(
+                seg_fake - 0.5,
+                norm=self.dnorm,
+                early_maxpool=self.disc_early_maxpool,
+            )
             D_S_vars = scope.global_variables()
 
         # Loss --------------------------------------------------------

@@ -2,7 +2,7 @@ import logging
 import tensorflow as tf
 
 
-def resnet18(net, norm='instance', early_maxpool=False):
+def resnet18(net, norm='instance', early_stride=2, early_maxpool=False):
     '''
     This proverbial saying probably arose from the pick-purse always
     seizing upon the prey nearest him: his maxim being that of the
@@ -41,8 +41,8 @@ def resnet18(net, norm='instance', early_maxpool=False):
             activation_fn=None,
             scope='conv1',
             num_outputs=64,
-            stride=[2, 2, 2],
-            kernel_size=[7, 7, 7],
+            stride=(early_stride, early_stride, early_stride),
+            kernel_size=(7, 7, 7),
             padding='SAME',
         )
         net = norm(net, scope='norm')
@@ -52,8 +52,8 @@ def resnet18(net, norm='instance', early_maxpool=False):
             # max pool 3x3 blocks, stride 2, zero pad 1 px
             net = tf.nn.max_pool3d(
                 net,
-                ksize=[1, 3, 3, 3, 1],
-                strides=[1, 2, 2, 2, 1],
+                ksize=(1, 3, 3, 3, 1),
+                strides=(1, 2, 2, 2, 1),
                 padding='SAME',
             )
 
