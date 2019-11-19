@@ -48,7 +48,13 @@ def random_fovs(
 
     # Load / preprocess array
     volume = dx.loadspec(volume_spec)
-    volume = (volume.astype(np.float32) - image_mean) / image_stddev
+    volume = volume.astype(np.float32)
+    if image_mean is not None:
+        volume = (volume - image_mean) / image_stddev
+    else:
+        # Map to [-1, 1]
+        volume /= 127.5
+        volume -= volume.mean()
 
     # Stride with fov_size to get patches
     all_fovs = view_as_windows(volume, fov_size)

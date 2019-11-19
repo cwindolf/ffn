@@ -2,7 +2,15 @@ import logging
 import tensorflow as tf
 
 
-def convdisc(net, norm='instance', depth=3):
+def convdisc(
+    net,
+    norm='instance',
+    depth=3,
+    stride=1,
+    kernel_size=5,
+    init_num_filters=64,
+    activation_fn=tf.nn.leaky_relu,
+):
     logging.info('Build conv discriminator.')
 
     conv = tf.contrib.layers.conv3d
@@ -16,18 +24,18 @@ def convdisc(net, norm='instance', depth=3):
             return net
 
     # Conv layers
-    num_outputs = 32
+    num_outputs = init_num_filters
     for d in range(depth):
         net = conv(
             net,
             activation_fn=None,
             num_outputs=num_outputs,
-            stride=(2, 2, 2),
-            kernel_size=(5, 5, 5),
+            stride=(stride, stride, stride),
+            kernel_size=(kernel_size, kernel_size, kernel_size),
             scope=f'conv{d}',
         )
         net = norm(net, scope=f'norm{d}')
-        net = tf.nn.relu(net)
+        net = activation_fn(net)
         num_outputs *= 2
         logging.info(f' - Shape of conv{d}: {net.shape}')
 
