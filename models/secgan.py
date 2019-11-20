@@ -47,8 +47,8 @@ class SECGAN:
 
     def __init__(
         self,
-        batch_size,
-        ffn_ckpt,
+        batch_size=8,
+        ffn_ckpt=None,
         generator_conv_clip=4,
         ffn_fov_shape=(33, 33, 33),
         ffn_depth=12,
@@ -68,6 +68,7 @@ class SECGAN:
         generator_dropout=False,
         seg_enhanced=True,
         label_noise=0.05,
+        generator_F_weights=None,
     ):
         '''
         Arguments
@@ -126,6 +127,8 @@ class SECGAN:
         self.gdepth = generator_depth
         self.seg_enhanced = seg_enhanced
 
+        self.generator_F_weights = generator_F_weights
+
         # Make discriminator factory
         if discriminator == 'resnet18':
 
@@ -173,9 +176,13 @@ class SECGAN:
         ]
 
         # Load up FFN -------------------------------------------------
-        self.ffn_weights = self.load_ffn_ckpt(
-            ffn_ckpt, ffn_fov_shape, batch_size
-        )
+        self.ffn_weights = None
+        if ffn_ckpt is not None:
+            self.ffn_weights = self.load_ffn_ckpt(
+                ffn_ckpt, ffn_fov_shape, batch_size
+            )
+        else:
+            assert not seg_enhanced
 
         # Handle seed
         self.seed_as_placeholder = True
@@ -266,31 +273,34 @@ class SECGAN:
             self.cycle_generated_unlabeled = self.gen(generated_labeled_big)
 
         # Segmentation ops --------------------------------------------
-        with tf.variable_scope('segmentation') as scope:
-            # Handle seed placeholder logic
-            if self.seed_as_placeholder:
-                self.input_seed = tf.placeholder(
-                    tf.float32, shape=self.ffn_input_shape, name='input_seed'
+        if self.ffn_weights:
+            with tf.variable_scope('segmentation') as scope:
+                # Handle seed placeholder logic
+                if self.seed_as_placeholder:
+                    self.input_seed = tf.placeholder(
+                        tf.float32,
+                        shape=self.ffn_input_shape,
+                        name='input_seed',
+                    )
+                else:
+                    self.input_seed = tf.constant(self.input_seed)
+
+                # Concatenate segmentation inputs with the seed
+                seg_true_input = tf.concat(
+                    [input_labeled_smol, self.input_seed], axis=4
                 )
-            else:
-                self.input_seed = tf.constant(self.input_seed)
+                seg_fake_input = tf.concat(
+                    [self.fake_labeled, self.input_seed], axis=4
+                )
 
-            # Concatenate segmentation inputs with the seed
-            seg_true_input = tf.concat(
-                [input_labeled_smol, self.input_seed], axis=4
-            )
-            seg_fake_input = tf.concat(
-                [self.fake_labeled, self.input_seed], axis=4
-            )
-
-            # Actually build FFN
-            seg_true = convstacktools.fixed_convstack_3d(
-                seg_true_input, self.ffn_weights, depth=self.ffn_depth
-            )
-            scope.reuse_variables()
-            seg_fake = convstacktools.fixed_convstack_3d(
-                seg_fake_input, self.ffn_weights, depth=self.ffn_depth
-            )
+                # Actually build FFN
+                seg_true = convstacktools.fixed_convstack_3d(
+                    seg_true_input, self.ffn_weights, depth=self.ffn_depth
+                )
+                scope.reuse_variables()
+                seg_fake = convstacktools.fixed_convstack_3d(
+                    seg_fake_input, self.ffn_weights, depth=self.ffn_depth
+                )
 
         # Discriminator ops -------------------------------------------
         # discriminator for unlabeled data
@@ -389,9 +399,7 @@ class SECGAN:
                 maxval=self.SEEMS_REAL + self.label_noise,
             )
             D_S_loss = self.discriminator_lambda * (
-                tf.reduce_mean(
-                    tf.squared_difference(D_S_fake, D_S_fake_label)
-                )
+                tf.reduce_mean(tf.squared_difference(D_S_fake, D_S_fake_label))
                 + tf.reduce_mean(
                     tf.squared_difference(D_S_true, D_S_true_label)
                 )
@@ -442,6 +450,7 @@ class SECGAN:
 
         # Saving / loading --------------------------------------------
         all_vars = G_vars + F_vars + D_u_vars + D_S_and_l_vars
+        self.F_vars = F_vars
         self.saver = tf.train.Saver(var_list=all_vars)
 
         # Add summaries -----------------------------------------------
@@ -520,19 +529,22 @@ class SECGAN:
         )
         tf.summary.image('cycles/cycle_unlabeled', vis_cycle_u)
 
-        # seg bootstrap: U -> L' -> seg
-        vis_seg_gen = tf.concat(
-            [vis_U, vis_L_, seg_fake[:, half_fov, ...]],
-            axis=2,
-            name='vis_seg_gen',
-        )
-        tf.summary.image('segs/unlabeled_seg', vis_seg_gen)
+        if self.seg_weights:
+            # seg bootstrap: U -> L' -> seg
+            vis_seg_gen = tf.concat(
+                [vis_U, vis_L_, seg_fake[:, half_fov, ...]],
+                axis=2,
+                name='vis_seg_gen',
+            )
+            tf.summary.image('segs/unlabeled_seg', vis_seg_gen)
 
-        # True seg: L -> seg
-        vis_seg_true = tf.concat(
-            [vis_L, seg_true[:, half_fov, ...]], axis=2, name='vis_seg_true'
-        )
-        tf.summary.image('segs/labeled_seg', vis_seg_true)
+            # True seg: L -> seg
+            vis_seg_true = tf.concat(
+                [vis_L, seg_true[:, half_fov, ...]],
+                axis=2,
+                name='vis_seg_true',
+            )
+            tf.summary.image('segs/labeled_seg', vis_seg_true)
 
         # Vis generated against true
         vis_gen_l = tf.concat([vis_L, vis_L_], axis=2, name='vis_gen_l')
@@ -540,8 +552,27 @@ class SECGAN:
         vis_gen_u = tf.concat([vis_U, vis_U_], axis=2, name='vis_gen_u')
         tf.summary.image('gens/unlabeled', vis_gen_u)
 
+    def define_inference_graph(self):
+        '''Build a minimal graph for running transfer using generator F
+        '''
+        # Placeholder has to be bigg because that's what F is used to.
+        self.xfer_input = tf.placeholder(
+            tf.float32, self.cycle_input_shape, 'xfer_input'
+        )
+
+        # Build generator F like usual, but with the fixed weights
+        with tf.variable_scope('generator_F'):
+            generated_labeled_big = self.gen(
+                self.input_unlabeled, weights=self.generator_F_weights
+            )
+
+        # That's it! Well actually we might need an init op, we'll see.
+        self.xfer_output = generated_labeled_big
+
     @staticmethod
     def load_ffn_ckpt(ffn_ckpt, fov_size, batch_size, depth=12):
+        '''Helper to load up FFN weights.
+        '''
         logging.info(f' - Loading FFN weights from {ffn_ckpt}')
         # The deltas are not important at all.
         ffn_deltas = [1, 1, 1]
@@ -565,3 +596,20 @@ class SECGAN:
                 )
 
         return weights
+
+    @classmethod
+    def genF_from_ckpt(cls, secgan_ckpt, **secgan_kwargs):
+        # No need to load FFN, we're already loading enough stuff haha.
+        if 'ffn_ckpt' in secgan_kwargs:
+            del secgan_kwargs['ffn_ckpt']
+        # Init secgan
+        secgan = cls(**secgan_kwargs)
+        # Throwaway graph just for getting weights as constants
+        generator_loading_graph = tf.Graph()
+        with generator_loading_graph.as_default():
+            secgan.define_tf_graph()
+            F_var_names = [v.op.name for v in secgan.F_vars]
+            with tf.Session() as sess:
+                secgan.saver.restore(secgan_ckpt)
+                weights = dict(zip(F_var_names, sess.run(secgan.F_vars)))
+        return cls(generator_F_weights=weights, **secgan_kwargs)
