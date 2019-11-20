@@ -68,7 +68,7 @@ class SECGAN:
         generator_dropout=False,
         seg_enhanced=True,
         label_noise=0.05,
-        generator_F_weights=None,
+        inference_ckpt=None,
     ):
         '''
         Arguments
@@ -127,7 +127,7 @@ class SECGAN:
         self.gdepth = generator_depth
         self.seg_enhanced = seg_enhanced
 
-        self.generator_F_weights = generator_F_weights
+        self.inference_ckpt = inference_ckpt
 
         # Make discriminator factory
         if discriminator == 'resnet18':
@@ -561,12 +561,21 @@ class SECGAN:
         )
 
         # Build generator F like usual, but with the fixed weights
-        with tf.variable_scope('generator_F'):
-            generated_labeled_big = self.gen(
-                self.input_unlabeled, weights=self.generator_F_weights
-            )
+        with tf.variable_scope('generator_F') as scope:
+            generated_labeled_big = self.gen(self.input_unlabeled)
 
-        # That's it! Well actually we might need an init op, we'll see.
+            F_vars = scope.global_variables()
+
+        # Make an op to restore just the relevant vars
+        F_init_op, F_init_fd = tf.contrib.framework.assign_from_checkpoint(
+            self.inference_ckpt, F_vars, ignore_missing_vars=True
+        )
+
+        # Be sure to run these.
+        self.F_init_op = F_init_op
+        self.F_init_fd = F_init_fd
+
+        # That's it!
         self.xfer_output = generated_labeled_big
 
     @staticmethod
@@ -596,20 +605,3 @@ class SECGAN:
                 )
 
         return weights
-
-    @classmethod
-    def genF_from_ckpt(cls, secgan_ckpt, **secgan_kwargs):
-        # No need to load FFN, we're already loading enough stuff haha.
-        if 'ffn_ckpt' in secgan_kwargs:
-            del secgan_kwargs['ffn_ckpt']
-        # Init secgan
-        secgan = cls(**secgan_kwargs)
-        # Throwaway graph just for getting weights as constants
-        generator_loading_graph = tf.Graph()
-        with generator_loading_graph.as_default():
-            secgan.define_tf_graph()
-            F_var_names = [v.op.name for v in secgan.F_vars]
-            with tf.Session() as sess:
-                secgan.saver.restore(secgan_ckpt)
-                weights = dict(zip(F_var_names, sess.run(secgan.F_vars)))
-        return cls(generator_F_weights=weights, **secgan_kwargs)
