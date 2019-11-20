@@ -32,6 +32,7 @@ def convstack_generator(
     if dropout:
         dropout = tf.contrib.layers.dropout
     else:
+
         def dropout(net, scope=None):
             return net
 
