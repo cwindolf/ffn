@@ -69,6 +69,7 @@ class SECGAN:
         seg_enhanced=True,
         label_noise=0.05,
         inference_ckpt=None,
+        inference_input_shape=None,
     ):
         '''
         Arguments
@@ -552,17 +553,17 @@ class SECGAN:
         vis_gen_u = tf.concat([vis_U, vis_U_], axis=2, name='vis_gen_u')
         tf.summary.image('gens/unlabeled', vis_gen_u)
 
-    def define_inference_graph(self):
+    def define_inference_graph(self, inference_input_shape):
         '''Build a minimal graph for running transfer using generator F
         '''
         # Placeholder has to be bigg because that's what F is used to.
         self.xfer_input = tf.placeholder(
-            tf.float32, self.cycle_input_shape, 'xfer_input'
+            tf.float32, (1, *inference_input_shape, 1), 'xfer_input'
         )
 
         # Build generator F like usual, but with the fixed weights
         with tf.variable_scope('generator_F') as scope:
-            generated_labeled_big = self.gen(self.input_unlabeled)
+            generated_labeled_big = self.gen(self.xfer_input)
 
             F_vars = scope.global_variables()
 

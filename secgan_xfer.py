@@ -28,11 +28,12 @@ def secgan_infer(
         generator_depth=generator_depth,
         generator_channels=generator_channels,
         inference_ckpt=checkpoint_path,
+        seg_enhanced=False,
     )
 
     # TF world
     with tf.Graph().as_default():
-        generator.define_inference_graph()
+        generator.define_inference_graph(unlabeled_volume.shape)
 
         with tf.Session() as sess:
             sess.run(generator.F_init_op, feed_dict=generator.F_init_fd)
