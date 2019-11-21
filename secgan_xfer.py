@@ -19,6 +19,7 @@ def secgan_infer(
 
     # Process data
     unlabeled_volume = unlabeled_volume.astype(np.float32)
+    unlabeled_volume -= unlabeled_volume.mean()
     unlabeled_volume /= 127.5
 
     # Init model
