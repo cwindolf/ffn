@@ -170,6 +170,11 @@ class SECGAN:
         ffn_fov_shape = np.array(ffn_fov_shape)
         self.ffn_fov_shape = ffn_fov_shape
         self.ffn_input_shape = [batch_size, *ffn_fov_shape, 1]
+        self.disc_input_shape = [
+            batch_size,
+            *(ffn_fov_shape + generator_conv_clip * self.gdepth),
+            1,
+        ]
         self.cycle_input_shape = [
             batch_size,
             *(ffn_fov_shape + 2 * generator_conv_clip * self.gdepth),
@@ -211,58 +216,60 @@ class SECGAN:
             tf.float32, self.cycle_input_shape, 'input_labeled'
         )
         logging.info(f' - Input labeled shape {self.input_labeled.shape}')
+        input_labeled_disc = tfx.center_crop_vol(
+            self.input_labeled, (self.generator_conv_clip * self.gdepth) // 2
+        )
         input_labeled_smol = tfx.center_crop_vol(
             self.input_labeled, self.generator_conv_clip * self.gdepth
         )
         self.input_unlabeled = tf.placeholder(
             tf.float32, self.cycle_input_shape, 'input_unlabeled'
         )
-        logging.info(f' - Input unlabeled shape {self.input_unlabeled.shape}')
         input_unlabeled_smol = tfx.center_crop_vol(
             self.input_unlabeled, self.generator_conv_clip * self.gdepth
         )
+        logging.info(f' - Input unlabeled shape {self.input_unlabeled.shape}')
+        input_unlabeled_disc = tfx.center_crop_vol(
+            self.input_unlabeled, (self.generator_conv_clip * self.gdepth) // 2
+        )
         self.fake_labeled = tf.placeholder(
-            tf.float32, self.ffn_input_shape, 'fake_labeled'
+            tf.float32, self.disc_input_shape, 'fake_labeled'
+        )
+        fake_labeled_smol = tfx.center_crop_vol(
+            self.fake_labeled, (self.generator_conv_clip * self.gdepth) // 2
         )
         self.fake_unlabeled = tf.placeholder(
-            tf.float32, self.ffn_input_shape, 'fake_unlabeled'
+            tf.float32, self.disc_input_shape, 'fake_unlabeled'
         )
 
         # Generator ops -----------------------------------------------
         # generator G makes fake unlabeled data
         with tf.variable_scope('generator_G') as scope:
-            generated_unlabeled_big = convstack_generator(
+            self.generated_unlabeled = convstack_generator(
                 self.input_labeled, norm=self.gnorm, depth=self.gdepth
             )
-            self.generated_unlabeled = tfx.center_crop_vol(
-                generated_unlabeled_big,
-                self.gdepth * self.generator_conv_clip // 2,
+            gen_unlabeled_smol = tfx.center_crop_vol(
+                self.generated_unlabeled,
+                (self.generator_conv_clip * self.gdepth) // 2,
             )
-            logging.info(
-                f' - Generated unlabeled shape {generated_unlabeled_big.shape}'
-            )
-            # logging.info(
-            #   ' - Placeholders required for generating unlabeled:'
-            # )
-            # deps = tfx.get_tensor_dependencies(self.generated_unlabeled)
-            # logging.info(f' >>> {", ".join(deps)}')
+            shp = self.generated_unlabeled.shape
+            logging.info(f' - Generated unlabeled shape {shp}')
             G_vars = scope.global_variables()
 
         # generator F makes fake labeled data
         with tf.variable_scope('generator_F') as scope:
-            generated_labeled_big = self.gen(self.input_unlabeled)
-            self.generated_labeled = tfx.center_crop_vol(
-                generated_labeled_big,
-                self.gdepth * self.generator_conv_clip // 2,
-            )
+            # This is disc shaped
+            self.generated_labeled = self.gen(self.input_unlabeled)
             logging.info(
                 f' - Generated labeled shape {self.generated_labeled.shape}'
             )
-            # logging.info(' - Placeholders required for generating labeled:')
-            # deps = tfx.get_tensor_dependencies(self.generated_labeled)
-            # logging.info(f' >>> {", ".join(deps)}')
+            gen_labeled_smol = tfx.center_crop_vol(
+                self.generated_labeled,
+                (self.generator_conv_clip * self.gdepth) // 2,
+            )
             scope.reuse_variables()
-            self.cycle_generated_labeled = self.gen(generated_unlabeled_big)
+            # This is ffn shaped
+            self.cycle_generated_labeled = self.gen(self.generated_unlabeled)
             logging.info(
                 ' - Cycle generated labeled shape '
                 f'{self.cycle_generated_labeled.shape}'
@@ -271,7 +278,8 @@ class SECGAN:
 
         # Back into G to close the other cycle
         with tf.variable_scope('generator_G', reuse=True) as scope:
-            self.cycle_generated_unlabeled = self.gen(generated_labeled_big)
+            # This is ffn shaped
+            self.cycle_generated_unlabeled = self.gen(self.generated_labeled)
 
         # Segmentation ops --------------------------------------------
         if self.ffn_weights:
@@ -291,7 +299,10 @@ class SECGAN:
                     [input_labeled_smol, self.input_seed], axis=4
                 )
                 seg_fake_input = tf.concat(
-                    [self.fake_labeled, self.input_seed], axis=4
+                    [fake_labeled_smol, self.input_seed], axis=4
+                )
+                seg_gen_input = tf.concat(
+                    [gen_labeled_smol, self.input_seed], axis=4
                 )
 
                 # Actually build FFN
@@ -302,20 +313,25 @@ class SECGAN:
                 seg_fake = convstacktools.fixed_convstack_3d(
                     seg_fake_input, self.ffn_weights, depth=self.ffn_depth
                 )
+                seg_gen = convstacktools.fixed_convstack_3d(
+                    seg_gen_input, self.ffn_weights, depth=self.ffn_depth
+                )
 
         # Discriminator ops -------------------------------------------
         # discriminator for unlabeled data
         with tf.variable_scope('discriminator_D_u') as scope:
-            D_u_true = self.disc(input_unlabeled_smol)
+            D_u_true = self.disc(input_unlabeled_disc)
             scope.reuse_variables()
             D_u_fake = self.disc(self.fake_unlabeled)
+            D_u_gen = self.disc(self.generated_unlabeled)
             D_u_vars = scope.global_variables()
 
         # and for labeled data...
         with tf.variable_scope('discriminator_D_l') as scope:
-            D_l_true = self.disc(self.input_labeled)
+            D_l_true = self.disc(input_labeled_disc)
             scope.reuse_variables()
             D_l_fake = self.disc(self.fake_labeled)
+            D_l_gen = self.disc(self.generated_labeled)
             D_l_vars = scope.global_variables()
 
         # and for segmentation...
@@ -324,6 +340,7 @@ class SECGAN:
                 D_S_true = self.disc(seg_true - 0.5)
                 scope.reuse_variables()
                 D_S_fake = self.disc(seg_fake - 0.5)
+                D_S_gen = self.disc(seg_gen - 0.5)
                 D_S_vars = scope.global_variables()
 
         # Loss --------------------------------------------------------
@@ -335,10 +352,10 @@ class SECGAN:
             tf.abs(self.cycle_generated_unlabeled - input_unlabeled_smol)
         )
         G_gan_loss = tf.reduce_mean(
-            tf.squared_difference(D_u_fake, self.SEEMS_REAL)
+            tf.squared_difference(D_u_gen, self.SEEMS_REAL)
         )
         F_gan_loss = tf.reduce_mean(
-            tf.squared_difference(D_l_fake, self.SEEMS_REAL)
+            tf.squared_difference(D_l_gen, self.SEEMS_REAL)
         )
         G_total_loss = (
             self.cycle_l_lambda * cycle_consistency_l
@@ -347,7 +364,7 @@ class SECGAN:
         )
         if self.seg_enhanced:
             G_seg_gan_loss = tf.reduce_mean(
-                tf.squared_difference(D_S_fake, self.SEEMS_REAL)
+                tf.squared_difference(D_S_gen, self.SEEMS_REAL)
             )
             G_total_loss = (
                 G_total_loss + self.generator_seg_lambda * G_seg_gan_loss
@@ -369,10 +386,10 @@ class SECGAN:
             minval=self.SEEMS_REAL - self.label_noise,
             maxval=self.SEEMS_REAL + self.label_noise,
         )
-        D_u_loss = self.discriminator_lambda * (
-            tf.reduce_mean(tf.squared_difference(D_u_fake, D_u_fake_label))
-            + tf.reduce_mean(tf.squared_difference(D_u_true, D_u_true_label))
-        )
+        D_u_loss = tf.reduce_mean(
+            tf.squared_difference(D_u_fake, D_u_fake_label)
+        ) + tf.reduce_mean(tf.squared_difference(D_u_true, D_u_true_label))
+        D_u_total_loss = self.discriminator_lambda * D_u_loss
         D_l_fake_label = tf.random_uniform(
             D_l_fake.shape,
             minval=self.SEEMS_FAKE - self.label_noise,
@@ -383,11 +400,11 @@ class SECGAN:
             minval=self.SEEMS_REAL - self.label_noise,
             maxval=self.SEEMS_REAL + self.label_noise,
         )
-        D_l_loss = self.discriminator_lambda * (
+        D_l_loss = (
             tf.reduce_mean(tf.squared_difference(D_l_fake, D_l_fake_label))
             + tf.reduce_mean(tf.squared_difference(D_l_true, D_l_true_label))
         )
-        D_S_and_l_total_loss = D_l_loss
+        D_S_and_l_total_loss = self.discriminator_lambda * D_l_loss
         if self.seg_enhanced:
             D_S_fake_label = tf.random_uniform(
                 D_S_fake.shape,
@@ -399,13 +416,12 @@ class SECGAN:
                 minval=self.SEEMS_REAL - self.label_noise,
                 maxval=self.SEEMS_REAL + self.label_noise,
             )
-            D_S_loss = self.discriminator_lambda * (
-                tf.reduce_mean(tf.squared_difference(D_S_fake, D_S_fake_label))
-                + tf.reduce_mean(
-                    tf.squared_difference(D_S_true, D_S_true_label)
-                )
+            D_S_loss = tf.reduce_mean(
+                tf.squared_difference(D_S_fake, D_S_fake_label)
+            ) + tf.reduce_mean(tf.squared_difference(D_S_true, D_S_true_label))
+            D_S_and_l_total_loss = self.discriminator_lambda * (
+                D_l_loss + D_S_loss
             )
-            D_S_and_l_total_loss = D_l_loss + D_S_loss
 
         # Optimization ops --------------------------------------------
         # Build optimizers
@@ -441,7 +457,7 @@ class SECGAN:
                 F_train_op = F_optimizer.apply_gradients(F_grads_and_vars)
                 with tf.control_dependencies([F_train_op]):
                     D_u_grads_and_vars = D_u_optimizer.compute_gradients(
-                        D_u_loss, var_list=D_u_vars
+                        D_u_total_loss, var_list=D_u_vars
                     )
                     D_u_train_op = D_u_optimizer.apply_gradients(
                         D_u_grads_and_vars
@@ -459,9 +475,9 @@ class SECGAN:
         tf.summary.scalar('losses/cycle_consistency_l', cycle_consistency_l)
         tf.summary.scalar('losses/cycle_consistency_u', cycle_consistency_u)
         tf.summary.scalar('losses/labeled_discriminator_loss', D_l_loss)
-        tf.summary.scalar('losses/labeled_gan_loss', G_gan_loss)
+        tf.summary.scalar('losses/F_gan_loss', F_gan_loss)
         tf.summary.scalar('losses/unlabeled_discriminator_loss', D_u_loss)
-        tf.summary.scalar('losses/unlabeled_gan_loss', F_gan_loss)
+        tf.summary.scalar('losses/G_gan_loss', G_gan_loss)
         tf.summary.scalar(
             'metrics/Du_fake_err',
             tf.reduce_mean(tf.abs(D_u_fake - self.SEEMS_FAKE)),
@@ -513,7 +529,7 @@ class SECGAN:
         # cycle: L -> U' -> L''
         half_fov = self.ffn_fov_shape[0] // 2
         vis_L = input_labeled_smol[:, half_fov, ...]
-        vis_U_ = self.generated_unlabeled[:, half_fov, ...]
+        vis_U_ = gen_unlabeled_smol[:, half_fov, ...]
         vis_L__ = self.cycle_generated_labeled[:, half_fov, ...]
         vis_cycle_l = tf.concat(
             [vis_L, vis_U_, vis_L__], axis=2, name='vis_cycle_l'
@@ -523,17 +539,17 @@ class SECGAN:
         # cycle: U -> L' -> U''
         half_fov = self.ffn_fov_shape[0] // 2
         vis_U = input_unlabeled_smol[:, half_fov, ...]
-        vis_L_ = self.generated_labeled[:, half_fov, ...]
+        vis_L_ = gen_labeled_smol[:, half_fov, ...]
         vis_U__ = self.cycle_generated_unlabeled[:, half_fov, ...]
         vis_cycle_u = tf.concat(
             [vis_U, vis_L_, vis_U__], axis=2, name='vis_cycle_u'
         )
         tf.summary.image('cycles/cycle_unlabeled', vis_cycle_u)
 
-        if self.seg_weights:
+        if self.ffn_weights:
             # seg bootstrap: U -> L' -> seg
             vis_seg_gen = tf.concat(
-                [vis_U, vis_L_, seg_fake[:, half_fov, ...]],
+                [vis_U, vis_L_, seg_gen[:, half_fov, ...]],
                 axis=2,
                 name='vis_seg_gen',
             )

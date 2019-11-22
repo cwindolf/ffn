@@ -52,7 +52,7 @@ FLAGS = flags.FLAGS
 def train_secgan(
     labeled_volume_spec,
     unlabeled_volume_spec,
-    ffn_ckpt,
+    ffn_ckpt=None,
     max_steps=10000,
     batch_size=8,
     generator_clip=4,
@@ -99,15 +99,11 @@ def train_secgan(
     pool_L = FakePool()
     pool_U = FakePool()
 
-    # Add nonsense to the pool just to simplify things
-    gen_L = np.full_like(seed, next(batches_L).mean())
-    gen_U = np.full_like(seed, next(batches_U).mean())
-
     # Init model ------------------------------------------------------
     logging.info('Initialize model...')
     secgan = SECGAN(
-        batch_size,
-        ffn_ckpt,
+        batch_size=batch_size,
+        ffn_ckpt=ffn_ckpt,
         generator_conv_clip=generator_clip,
         ffn_fov_shape=(ffn_fov_size, ffn_fov_size, ffn_fov_size),
         cycle_l_lambda=cycle_l_lambda,
@@ -147,6 +143,23 @@ def train_secgan(
             save_summaries_secs=30,
             save_checkpoint_secs=600,
         ) as sess:
+            # Get some initial images to start off the pool.
+            batch_L_0 = next(batches_L)
+            batch_U_0 = next(batches_U)
+            fake_0 = np.zeros(secgan.disc_input_shape, dtype=np.float32)
+            gen_L, gen_U = sess.run(
+                [secgan.generated_labeled, secgan.generated_unlabeled],
+                feed_dict={
+                    secgan.input_labeled: batch_L_0,
+                    secgan.input_unlabeled: batch_U_0,
+                    # Need to be supplied but won't do anything since
+                    # we are not running the train op.
+                    secgan.fake_labeled: fake_0,
+                    secgan.fake_unlabeled: fake_0,
+                },
+            )
+
+            # Now we can iterate happily.
             for i, (batch_L, batch_U) in enumerate(zip(batches_L, batches_U)):
                 # run train op
                 _, gen_L, gen_U = sess.run(
@@ -172,12 +185,7 @@ def train_secgan(
 if __name__ == '__main__':
     # -----------------------------------------------------------------
     flags.mark_flags_as_required(
-        [
-            'train_dir',
-            'ffn_ckpt',
-            'labeled_volume_spec',
-            'unlabeled_volume_spec',
-        ]
+        ['train_dir', 'labeled_volume_spec', 'unlabeled_volume_spec']
     )
 
     def main(argv):
@@ -188,11 +196,10 @@ if __name__ == '__main__':
         train_secgan(
             FLAGS.labeled_volume_spec,
             FLAGS.unlabeled_volume_spec,
-            FLAGS.ffn_ckpt,
+            ffn_ckpt=FLAGS.ffn_ckpt,
             max_steps=FLAGS.max_steps,
             batch_size=FLAGS.batch_size,
             ffn_fov_size=FLAGS.ffn_fov_size,
-
             cycle_l_lambda=FLAGS.cycle_l_lambda,
             cycle_u_lambda=FLAGS.cycle_u_lambda,
             generator_lambda=FLAGS.generator_lambda,
