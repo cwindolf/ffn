@@ -19,8 +19,8 @@ def secgan_infer(
 
     # Process data
     unlabeled_volume = unlabeled_volume.astype(np.float32)
-    unlabeled_volume -= unlabeled_volume.mean()
     unlabeled_volume /= 127.5
+    unlabeled_volume -= 1.0
 
     # Init model
     generator = SECGAN(
@@ -52,6 +52,7 @@ def secgan_infer(
     # by (my fork of) the FFN inference script, I think, haha.
     # IDK, depends on the inference request.
     xfer_volume = xfer_volume.squeeze()
+    xfer_volume += 1.0
     xfer_volume *= 127.5
 
     # Write output
