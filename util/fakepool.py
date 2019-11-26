@@ -1,4 +1,5 @@
 import numpy as np
+import logging
 from random import getrandbits, randrange
 
 
@@ -13,6 +14,7 @@ class FakePool:
     '''
 
     def __init__(self, pool_size=64):
+        logging.info(f'FakePool({pool_size})')
         self.size = pool_size
         self.pool = []
         self.never_queried = True
