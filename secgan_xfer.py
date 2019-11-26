@@ -5,22 +5,23 @@ from models.secgan import SECGAN
 
 
 def secgan_infer(
-    unlabeled_volume_spec,
+    content_volume_spec,
     output_spec,
     checkpoint_path,
     ffn_fov_size=33,
     generator_depth=8,
     generator_channels=32,
+    F_or_G='F',
 ):
     '''Run the generator F to map an unabeled volume to a labeled-ish volume
     '''
     # Load data
-    unlabeled_volume = dx.loadspec(unlabeled_volume_spec)
+    content_volume = dx.loadspec(content_volume_spec)
 
     # Process data
-    unlabeled_volume = unlabeled_volume.astype(np.float32)
-    unlabeled_volume /= 127.5
-    unlabeled_volume -= 1.0
+    content_volume = content_volume.astype(np.float32)
+    content_volume /= 127.5
+    content_volume -= 1.0
 
     # Init model
     generator = SECGAN(
@@ -34,15 +35,22 @@ def secgan_infer(
 
     # TF world
     with tf.Graph().as_default():
-        generator.define_inference_graph(unlabeled_volume.shape)
+        if F_or_G == 'F':
+            generator.define_F_graph(content_volume.shape)
+        elif F_or_G == 'G':
+            generator.define_G_graph(content_volume.shape)
+        else:
+            raise ValueError(
+                f'F or G? Like, I only ask because you put "{F_or_G}"...'
+            )
 
         with tf.Session() as sess:
-            sess.run(generator.F_init_op, feed_dict=generator.F_init_fd)
+            sess.run(generator.inf_init_op, feed_dict=generator.inf_init_fd)
 
             xfer_volume = sess.run(
                 generator.xfer_output,
                 feed_dict={
-                    generator.xfer_input: unlabeled_volume[None, ..., None]
+                    generator.xfer_input: content_volume[None, ..., None]
                 },
             )
 
@@ -66,10 +74,11 @@ if __name__ == '__main__':
     from absl import app
     from absl import flags
 
-    flags.DEFINE_string('unlabeled_volume_spec', None, '')
+    flags.DEFINE_string('content_volume_spec', None, '')
     flags.DEFINE_string('output_spec', None, '')
     flags.DEFINE_string('checkpoint_path', None, '')
 
+    flags.DEFINE_string('F_or_G', 'F', '')
     flags.DEFINE_integer('ffn_fov_size', 33, '')
     flags.DEFINE_integer('generator_depth', 8, '')
     flags.DEFINE_integer('generator_channels', 32, '')
@@ -78,12 +87,13 @@ if __name__ == '__main__':
 
     def main(argv):
         secgan_infer(
-            FLAGS.unlabeled_volume_spec,
+            FLAGS.content_volume_spec,
             FLAGS.output_spec,
             FLAGS.checkpoint_path,
             ffn_fov_size=FLAGS.ffn_fov_size,
             generator_depth=FLAGS.generator_depth,
             generator_channels=FLAGS.generator_channels,
+            F_or_G=FLAGS.F_or_G,
         )
 
     app.run(main)

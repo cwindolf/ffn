@@ -101,15 +101,20 @@ class SECGAN:
             f'cycle_l_lambda={cycle_l_lambda}',
             f'cycle_u_lambda={cycle_u_lambda}',
             f'generator_lambda={generator_lambda}',
+            f'discriminator_lambda={discriminator_lambda}',
             f'generator_seg_lambda={generator_seg_lambda}',
-            # f'input_seed={input_seed}',
             f'generator_norm={generator_norm}',
             f'discriminator_norm={discriminator_norm}',
             f'disc_early_maxpool={disc_early_maxpool}',
             f'discriminator={discriminator}',
             f'convdisc_depth={convdisc_depth}',
             f'generator_depth={generator_depth}',
+            f'generator_channels={generator_channels}',
+            f'generator_dropout={generator_dropout}',
             f'seg_enhanced={seg_enhanced}',
+            f'label_noise={label_noise}',
+            f'inference_ckpt={inference_ckpt}',
+            f'inference_input_shape={inference_input_shape}',
         ]
         paramstr = ",\n    ".join(paramstrs)
         logging.info(f'SECGAN(\n    {paramstr}\n)')
@@ -569,8 +574,11 @@ class SECGAN:
         vis_gen_u = tf.concat([vis_U, vis_U_], axis=2, name='vis_gen_u')
         tf.summary.image('gens/unlabeled', vis_gen_u)
 
-    def define_inference_graph(self, inference_input_shape):
+    def define_F_graph(self, inference_input_shape):
         '''Build a minimal graph for running transfer using generator F
+
+        Like, this runs the map from the unlabeled domain to the
+        labeled domain.
         '''
         # Placeholder has to be bigg because that's what F is used to.
         self.xfer_input = tf.placeholder(
@@ -589,8 +597,37 @@ class SECGAN:
         )
 
         # Be sure to run these.
-        self.F_init_op = F_init_op
-        self.F_init_fd = F_init_fd
+        self.inf_init_op = F_init_op
+        self.inf_init_fd = F_init_fd
+
+        # That's it!
+        self.xfer_output = generated_labeled_big
+
+    def define_G_graph(self, inference_input_shape):
+        '''Build a minimal graph for running transfer using generator G
+
+        Like, this runs the map from the labeled domain to the
+        unlabeled domain.
+        '''
+        # Placeholder has to be bigg because that's what G is used to.
+        self.xfer_input = tf.placeholder(
+            tf.float32, (1, *inference_input_shape, 1), 'xfer_input'
+        )
+
+        # Build generator G like usual, but with the fixed weights
+        with tf.variable_scope('generator_G') as scope:
+            generated_labeled_big = self.gen(self.xfer_input)
+
+            G_vars = scope.global_variables()
+
+        # Make an op to restore just the relevant vars
+        G_init_op, G_init_fd = tf.contrib.framework.assign_from_checkpoint(
+            self.inference_ckpt, G_vars, ignore_missing_vars=True
+        )
+
+        # Be sure to run these.
+        self.inf_init_op = G_init_op
+        self.inf_init_fd = G_init_fd
 
         # That's it!
         self.xfer_output = generated_labeled_big
