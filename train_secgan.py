@@ -42,6 +42,7 @@ flags.DEFINE_boolean('generator_dropout', False, '')
 flags.DEFINE_integer('convdisc_depth', 3, '')
 flags.DEFINE_integer('generator_depth', 8, '')
 flags.DEFINE_integer('generator_channels', 32, '')
+flags.DEFINE_float('label_noise', 0.0, '')
 
 
 FLAGS = flags.FLAGS
@@ -71,6 +72,7 @@ def train_secgan(
     generator_channels=32,
     generator_dropout=False,
     seg_enhanced=True,
+    label_noise=0.0,
 ):
     '''Run secgan training protocol.'''
     # Load data -------------------------------------------------------
@@ -121,6 +123,7 @@ def train_secgan(
         generator_channels=generator_channels,
         generator_dropout=generator_dropout,
         seg_enhanced=seg_enhanced,
+        label_noise=label_noise,
     )
 
     # Enter TF world --------------------------------------------------
@@ -214,6 +217,7 @@ if __name__ == '__main__':
             generator_channels=FLAGS.generator_channels,
             generator_dropout=FLAGS.generator_dropout,
             seg_enhanced=FLAGS.seg_enhanced,
+            label_noise=FLAGS.label_noise,
         )
 
     app.run(main)
