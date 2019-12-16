@@ -52,10 +52,12 @@ class SECGAN:
         generator_conv_clip=4,
         ffn_fov_shape=(33, 33, 33),
         ffn_depth=12,
+        ffn_features_layer=12,
         cycle_l_lambda=2.0,
         cycle_u_lambda=0.5,
         generator_lambda=1.0,
-        discriminator_lambda=1.0,
+        u_discriminator_lambda=1.0,
+        l_discriminator_lambda=1.0,
         generator_seg_lambda=1.0,
         input_seed=None,
         generator_norm=None,
@@ -69,7 +71,6 @@ class SECGAN:
         seg_enhanced=True,
         label_noise=0.05,
         inference_ckpt=None,
-        inference_input_shape=None,
     ):
         '''
         Arguments
@@ -98,10 +99,12 @@ class SECGAN:
             f'generator_conv_clip={generator_conv_clip}',
             f'ffn_fov_shape={ffn_fov_shape}',
             f'ffn_depth={ffn_depth}',
+            f'ffn_features_layer={ffn_features_layer}',
             f'cycle_l_lambda={cycle_l_lambda}',
             f'cycle_u_lambda={cycle_u_lambda}',
             f'generator_lambda={generator_lambda}',
-            f'discriminator_lambda={discriminator_lambda}',
+            f'u_discriminator_lambda={u_discriminator_lambda}',
+            f'l_discriminator_lambda={l_discriminator_lambda}',
             f'generator_seg_lambda={generator_seg_lambda}',
             f'generator_norm={generator_norm}',
             f'discriminator_norm={discriminator_norm}',
@@ -114,19 +117,20 @@ class SECGAN:
             f'seg_enhanced={seg_enhanced}',
             f'label_noise={label_noise}',
             f'inference_ckpt={inference_ckpt}',
-            f'inference_input_shape={inference_input_shape}',
         ]
         paramstr = ",\n    ".join(paramstrs)
         logging.info(f'SECGAN(\n    {paramstr}\n)')
 
         self.ffn_depth = ffn_depth
+        self.ffn_features_layer = ffn_features_layer
         self.generator_conv_clip = generator_conv_clip
         self.label_noise = label_noise
 
         self.cycle_l_lambda = cycle_l_lambda
         self.cycle_u_lambda = cycle_u_lambda
         self.generator_lambda = generator_lambda
-        self.discriminator_lambda = discriminator_lambda
+        self.u_discriminator_lambda = u_discriminator_lambda
+        self.l_discriminator_lambda = l_discriminator_lambda
         self.generator_seg_lambda = generator_seg_lambda
 
         self.gnorm = generator_norm
@@ -135,6 +139,26 @@ class SECGAN:
 
         self.inference_ckpt = inference_ckpt
 
+        # Compute input shapes ----------------------------------------
+        # Since the generators use VALID padding, we need to
+        # grab more raw data when we're passing through more generators.
+        # Placeholders will be sized by the largest input needed from that
+        # data, and will be center cropped to suit the task.
+        ffn_fov_shape = np.array(ffn_fov_shape)
+        self.ffn_fov_shape = ffn_fov_shape
+        self.ffn_input_shape = [batch_size, *ffn_fov_shape, 1]
+        self.disc_input_shape = [
+            batch_size,
+            *(ffn_fov_shape + generator_conv_clip * self.gdepth),
+            1,
+        ]
+        self.cycle_input_shape = [
+            batch_size,
+            *(ffn_fov_shape + 2 * generator_conv_clip * self.gdepth),
+            1,
+        ]
+
+        # Network factory functions -----------------------------------
         # Make discriminator factory
         if discriminator == 'resnet18':
 
@@ -167,24 +191,30 @@ class SECGAN:
 
         self.gen = gen
 
-        # Compute input shapes
-        # Since the generators use VALID padding, we need to
-        # grab more raw data when we're passing through more generators.
-        # Placeholders will be sized by the largest input needed from that
-        # data, and will be center cropped to suit the task.
-        ffn_fov_shape = np.array(ffn_fov_shape)
-        self.ffn_fov_shape = ffn_fov_shape
-        self.ffn_input_shape = [batch_size, *ffn_fov_shape, 1]
-        self.disc_input_shape = [
-            batch_size,
-            *(ffn_fov_shape + generator_conv_clip * self.gdepth),
-            1,
-        ]
-        self.cycle_input_shape = [
-            batch_size,
-            *(ffn_fov_shape + 2 * generator_conv_clip * self.gdepth),
-            1,
-        ]
+        # Make FFN factory
+        if self.ffn_features_layer >= self.ffn_depth:
+            logging.info('Using FFN last layer')
+
+            def ffn(net):
+                logits = convstacktools.fixed_convstack_3d(
+                    net, self.ffn_weights, depth=self.ffn_depth
+                )
+                return logits - 0.5, logits
+
+        else:
+            logging.info('Using FFN features')
+
+            def ffn(net):
+                features, logits = convstacktools.peeping_convstack_3d(
+                    net,
+                    weights=self.ffn_weights,
+                    depth=self.ffn_features_layer,
+                    full_depth=self.ffn_depth,
+                    return_end=True,
+                )
+                return features, logits
+
+        self.ffn = ffn
 
         # Load up FFN -------------------------------------------------
         self.ffn_weights = None
@@ -311,16 +341,10 @@ class SECGAN:
                 )
 
                 # Actually build FFN
-                seg_true = convstacktools.fixed_convstack_3d(
-                    seg_true_input, self.ffn_weights, depth=self.ffn_depth
-                )
+                seg_feat_true, seg_true = self.ffn(seg_true_input)
                 scope.reuse_variables()
-                seg_fake = convstacktools.fixed_convstack_3d(
-                    seg_fake_input, self.ffn_weights, depth=self.ffn_depth
-                )
-                seg_gen = convstacktools.fixed_convstack_3d(
-                    seg_gen_input, self.ffn_weights, depth=self.ffn_depth
-                )
+                seg_feat_fake, seg_fake = self.ffn(seg_fake_input)
+                seg_feat_gen, seg_gen = self.ffn(seg_gen_input)
 
         # Discriminator ops -------------------------------------------
         # discriminator for unlabeled data
@@ -342,10 +366,10 @@ class SECGAN:
         # and for segmentation...
         if self.seg_enhanced:
             with tf.variable_scope('discriminator_D_s') as scope:
-                D_S_true = self.disc(seg_true - 0.5)
+                D_S_true = self.disc(seg_feat_true)
                 scope.reuse_variables()
-                D_S_fake = self.disc(seg_fake - 0.5)
-                D_S_gen = self.disc(seg_gen - 0.5)
+                D_S_fake = self.disc(seg_feat_fake)
+                D_S_gen = self.disc(seg_feat_gen)
                 D_S_vars = scope.global_variables()
 
         # Loss --------------------------------------------------------
@@ -394,7 +418,7 @@ class SECGAN:
         D_u_loss = tf.reduce_mean(
             tf.squared_difference(D_u_fake, D_u_fake_label)
         ) + tf.reduce_mean(tf.squared_difference(D_u_true, D_u_true_label))
-        D_u_total_loss = self.discriminator_lambda * D_u_loss
+        D_u_total_loss = self.u_discriminator_lambda * D_u_loss
         D_l_fake_label = tf.random_uniform(
             D_l_fake.shape,
             minval=self.SEEMS_FAKE - self.label_noise,
@@ -405,11 +429,10 @@ class SECGAN:
             minval=self.SEEMS_REAL - self.label_noise,
             maxval=self.SEEMS_REAL + self.label_noise,
         )
-        D_l_loss = (
-            tf.reduce_mean(tf.squared_difference(D_l_fake, D_l_fake_label))
-            + tf.reduce_mean(tf.squared_difference(D_l_true, D_l_true_label))
-        )
-        D_S_and_l_total_loss = self.discriminator_lambda * D_l_loss
+        D_l_loss = tf.reduce_mean(
+            tf.squared_difference(D_l_fake, D_l_fake_label)
+        ) + tf.reduce_mean(tf.squared_difference(D_l_true, D_l_true_label))
+        D_S_and_l_total_loss = self.l_discriminator_lambda * D_l_loss
         if self.seg_enhanced:
             D_S_fake_label = tf.random_uniform(
                 D_S_fake.shape,
@@ -424,7 +447,7 @@ class SECGAN:
             D_S_loss = tf.reduce_mean(
                 tf.squared_difference(D_S_fake, D_S_fake_label)
             ) + tf.reduce_mean(tf.squared_difference(D_S_true, D_S_true_label))
-            D_S_and_l_total_loss = self.discriminator_lambda * (
+            D_S_and_l_total_loss = self.l_discriminator_lambda * (
                 D_l_loss + D_S_loss
             )
 
@@ -473,7 +496,9 @@ class SECGAN:
         # Saving / loading --------------------------------------------
         all_vars = G_vars + F_vars + D_u_vars + D_S_and_l_vars
         self.F_vars = F_vars
-        self.saver = tf.train.Saver(var_list=all_vars)
+        self.saver = tf.train.Saver(
+            var_list=all_vars, keep_checkpoint_every_n_hours=0.25
+        )
 
         # Add summaries -----------------------------------------------
         # the various losses
