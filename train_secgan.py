@@ -15,6 +15,7 @@ from util.fakepool import FakePool
 flags.DEFINE_string('train_dir', None, 'Where to save decoder checkpoints.')
 flags.DEFINE_string('ffn_ckpt', None, 'Load this up as the encoder.')
 flags.DEFINE_integer('ffn_fov_size', 33, '')
+flags.DEFINE_integer('ffn_features_layer', 12, '')
 flags.DEFINE_integer('max_steps', 10000, 'Number of decoder train steps.')
 flags.DEFINE_integer('batch_size', 8, 'Simultaneous volumes.')
 flags.DEFINE_integer('fakepool_sz', 0, '')
@@ -33,7 +34,8 @@ flags.DEFINE_float('cycle_l_lambda', 2.5, '')
 flags.DEFINE_float('cycle_u_lambda', 0.5, '')
 flags.DEFINE_float('generator_lambda', 1.0, '')
 flags.DEFINE_float('generator_seg_lambda', 1.0, '')
-flags.DEFINE_float('discriminator_lambda', 1.0, '')
+flags.DEFINE_float('u_discriminator_lambda', 1.0, '')
+flags.DEFINE_float('l_discriminator_lambda', 1.0, '')
 flags.DEFINE_string('generator_norm', None, '')
 flags.DEFINE_string('discriminator_norm', 'instance', '')
 flags.DEFINE_boolean('disc_early_maxpool', False, '')
@@ -58,10 +60,12 @@ def train_secgan(
     batch_size=8,
     generator_clip=4,
     ffn_fov_size=33,
+    ffn_features_layer=12,
     cycle_l_lambda=2.0,
     cycle_u_lambda=0.5,
     generator_lambda=1.0,
-    discriminator_lambda=1.0,
+    u_discriminator_lambda=1.0,
+    l_discriminator_lambda=1.0,
     generator_seg_lambda=1.0,
     generator_norm=None,
     discriminator_norm='instance',
@@ -108,10 +112,12 @@ def train_secgan(
         ffn_ckpt=ffn_ckpt,
         generator_conv_clip=generator_clip,
         ffn_fov_shape=(ffn_fov_size, ffn_fov_size, ffn_fov_size),
+        ffn_features_layer=ffn_features_layer,
         cycle_l_lambda=cycle_l_lambda,
         cycle_u_lambda=cycle_u_lambda,
         generator_lambda=generator_lambda,
-        discriminator_lambda=discriminator_lambda,
+        u_discriminator_lambda=u_discriminator_lambda,
+        l_discriminator_lambda=l_discriminator_lambda,
         generator_seg_lambda=generator_seg_lambda,
         input_seed=seed,
         generator_norm=generator_norm,
@@ -203,10 +209,12 @@ if __name__ == '__main__':
             max_steps=FLAGS.max_steps,
             batch_size=FLAGS.batch_size,
             ffn_fov_size=FLAGS.ffn_fov_size,
+            ffn_features_layer=FLAGS.ffn_features_layer,
             cycle_l_lambda=FLAGS.cycle_l_lambda,
             cycle_u_lambda=FLAGS.cycle_u_lambda,
             generator_lambda=FLAGS.generator_lambda,
-            discriminator_lambda=FLAGS.discriminator_lambda,
+            u_discriminator_lambda=FLAGS.u_discriminator_lambda,
+            l_discriminator_lambda=FLAGS.l_discriminator_lambda,
             generator_seg_lambda=FLAGS.generator_seg_lambda,
             generator_norm=FLAGS.generator_norm,
             discriminator_norm=FLAGS.discriminator_norm,
