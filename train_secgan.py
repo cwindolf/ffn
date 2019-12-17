@@ -19,6 +19,7 @@ flags.DEFINE_integer('ffn_features_layer', 12, '')
 flags.DEFINE_integer('max_steps', 10000, 'Number of decoder train steps.')
 flags.DEFINE_integer('batch_size', 8, 'Simultaneous volumes.')
 flags.DEFINE_integer('fakepool_sz', 0, '')
+flags.DEFINE_boolean('split_devices', False, '')
 
 # Data
 flags.DEFINE_string(
@@ -77,6 +78,7 @@ def train_secgan(
     generator_dropout=False,
     seg_enhanced=True,
     label_noise=0.0,
+    split_devices=False,
 ):
     '''Run secgan training protocol.'''
     # Load data -------------------------------------------------------
@@ -130,6 +132,9 @@ def train_secgan(
         generator_dropout=generator_dropout,
         seg_enhanced=seg_enhanced,
         label_noise=label_noise,
+        F_device=0 if split_devices else None,
+        G_device=1 if split_devices else None,
+        S_device=0 if split_devices else None,
     )
 
     # Enter TF world --------------------------------------------------
@@ -145,6 +150,10 @@ def train_secgan(
         config = tf.ConfigProto(
             log_device_placement=False, allow_soft_placement=True
         )
+        if split_devices:
+            config = tf.ConfigProto(
+                log_device_placement=True, allow_soft_placement=False
+            )
         with tf.train.MonitoredTrainingSession(
             config=config,
             scaffold=scaffold,
@@ -226,6 +235,7 @@ if __name__ == '__main__':
             generator_dropout=FLAGS.generator_dropout,
             seg_enhanced=FLAGS.seg_enhanced,
             label_noise=FLAGS.label_noise,
+            split_devices=FLAGS.split_devices,
         )
 
     app.run(main)
