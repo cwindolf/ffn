@@ -46,7 +46,11 @@ flags.DEFINE_integer('convdisc_depth', 3, '')
 flags.DEFINE_integer('generator_depth', 8, '')
 flags.DEFINE_integer('generator_channels', 32, '')
 flags.DEFINE_float('label_noise', 0.0, '')
-flags.DEFINE_boolean('seed_logit', True, '')
+flags.DEFINE_boolean(
+    'seed_logit',
+    True,
+    'Evidence is fairly conclusive that one should not change this.',
+)
 
 
 FLAGS = flags.FLAGS
