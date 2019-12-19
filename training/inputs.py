@@ -33,6 +33,7 @@ def random_fovs(
     image_stddev=33.0,
     permutable_axes=(0, 1, 2),
     reflectable_axes=(0, 1, 2),
+    random_state=np.random,
 ):
     '''A generator looping through batches of  random fovs in volume
 
@@ -80,18 +81,20 @@ def random_fovs(
         # Load
         batch = (
             all_fovs[
-                np.random.randint(fovs_per_side, size=batch_size),
-                np.random.randint(fovs_per_side, size=batch_size),
-                np.random.randint(fovs_per_side, size=batch_size),
+                random_state.randint(fovs_per_side, size=batch_size),
+                random_state.randint(fovs_per_side, size=batch_size),
+                random_state.randint(fovs_per_side, size=batch_size),
             ]
             + 0.0
         )
 
         # Augment
         if pax:
-            batch = batch.swapaxes(*np.random.choice(permutable_axes, size=2))
+            batch = batch.swapaxes(
+                *random_state.choice(permutable_axes, size=2)
+            )
         if rax:
-            batch = np.flip(batch, axis=np.random.choice(reflectable_axes))
+            batch = np.flip(batch, axis=random_state.choice(reflectable_axes))
 
         yield batch[..., None]
 
@@ -102,6 +105,7 @@ def multi_random_fovs(
     fov_size,
     permutable_axes=(0, 1, 2),
     reflectable_axes=(0, 1, 2),
+    random_state=np.random,
 ):
     '''A generator looping through batches of  random fovs in volume
 
@@ -151,7 +155,7 @@ def multi_random_fovs(
     # Loop to yield batches
     while True:
         # Weighted volume choice
-        loc = np.random.randint(tot_fovs, dtype=int)
+        loc = random_state.randint(tot_fovs, dtype=int)
         for i, n in enumerate(n_fovs):
             loc = loc - n
             if loc <= 0:
@@ -160,18 +164,20 @@ def multi_random_fovs(
         # Load
         batch = (
             all_fovs[i][
-                np.random.randint(fovs_per_side[i], size=batch_size),
-                np.random.randint(fovs_per_side[i], size=batch_size),
-                np.random.randint(fovs_per_side[i], size=batch_size),
+                random_state.randint(fovs_per_side[i], size=batch_size),
+                random_state.randint(fovs_per_side[i], size=batch_size),
+                random_state.randint(fovs_per_side[i], size=batch_size),
             ]
             + 0.0
         )
 
         # Augment
         if pax:
-            batch = batch.swapaxes(*np.random.choice(permutable_axes, size=2))
+            batch = batch.swapaxes(
+                *random_state.choice(permutable_axes, size=2)
+            )
         if rax:
-            batch = np.flip(batch, axis=np.random.choice(reflectable_axes))
+            batch = np.flip(batch, axis=random_state.choice(reflectable_axes))
 
         yield batch[..., None]
 
