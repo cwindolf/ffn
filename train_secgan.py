@@ -22,11 +22,11 @@ flags.DEFINE_integer('fakepool_sz', 0, '')
 flags.DEFINE_boolean('split_devices', False, '')
 
 # Data
-flags.DEFINE_string(
-    'labeled_volume_spec', None, 'Datspec for labeled data volume.'
+flags.DEFINE_spaceseplist(
+    'labeled_volume_specs', None, 'Datspecs for labeled data volumes.'
 )
-flags.DEFINE_string(
-    'unlabeled_volume_spec', None, 'Datspec for unlabeled data volume.'
+flags.DEFINE_spaceseplist(
+    'unlabeled_volume_specs', None, 'Datspecs for unlabeled data volumes.'
 )
 
 # Model?
@@ -46,6 +46,7 @@ flags.DEFINE_integer('convdisc_depth', 3, '')
 flags.DEFINE_integer('generator_depth', 8, '')
 flags.DEFINE_integer('generator_channels', 32, '')
 flags.DEFINE_float('label_noise', 0.0, '')
+flags.DEFINE_boolean('seed_logit', True, '')
 
 
 FLAGS = flags.FLAGS
@@ -54,8 +55,8 @@ FLAGS = flags.FLAGS
 
 
 def train_secgan(
-    labeled_volume_spec,
-    unlabeled_volume_spec,
+    labeled_volume_specs,
+    unlabeled_volume_specs,
     ffn_ckpt=None,
     max_steps=10000,
     batch_size=8,
@@ -79,29 +80,51 @@ def train_secgan(
     seg_enhanced=True,
     label_noise=0.0,
     split_devices=False,
+    seed_logit=True,
 ):
     '''Run secgan training protocol.'''
     # Load data -------------------------------------------------------
     logging.info('Loading data...')
 
     # Make batch generators
-    batches_L = inputs.random_fovs(
-        labeled_volume_spec,
-        batch_size,
-        ffn_fov_size + 2 * generator_clip * generator_depth,
-        image_mean=None,
-        image_stddev=None,
-    )
-    batches_U = inputs.random_fovs(
-        unlabeled_volume_spec,
-        batch_size,
-        ffn_fov_size + 2 * generator_clip * generator_depth,
-        image_mean=None,
-        image_stddev=None,
-    )
+    if len(labeled_volume_specs) == 1:
+        batches_L = inputs.random_fovs(
+            labeled_volume_specs[0],
+            batch_size,
+            ffn_fov_size + 2 * generator_clip * generator_depth,
+            image_mean=None,
+            image_stddev=None,
+        )
+    else:
+        batches_L = inputs.multi_random_fovs(
+            labeled_volume_specs,
+            batch_size,
+            ffn_fov_size + 2 * generator_clip * generator_depth,
+        )
+    if len(unlabeled_volume_specs) == 1:
+        batches_U = inputs.random_fovs(
+            unlabeled_volume_specs[0],
+            batch_size,
+            ffn_fov_size + 2 * generator_clip * generator_depth,
+            image_mean=None,
+            image_stddev=None,
+        )
+    else:
+        batches_U = inputs.multi_random_fovs(
+            unlabeled_volume_specs,
+            batch_size,
+            ffn_fov_size + 2 * generator_clip * generator_depth,
+        )
 
     # Make seed
-    seed = inputs.fixed_seed_batch(batch_size, ffn_fov_size, 0.5, 0.5)
+    seed = inputs.fixed_seed_batch(
+        batch_size,
+        ffn_fov_size,
+        0.5,
+        0.95,
+        with_init=True,
+        seed_logit=seed_logit,
+    )
 
     # Make fake image pool
     pool_L = FakePool()
@@ -150,10 +173,6 @@ def train_secgan(
         config = tf.ConfigProto(
             log_device_placement=False, allow_soft_placement=True
         )
-        if split_devices:
-            config = tf.ConfigProto(
-                log_device_placement=True, allow_soft_placement=False
-            )
         with tf.train.MonitoredTrainingSession(
             config=config,
             scaffold=scaffold,
@@ -203,17 +222,19 @@ def train_secgan(
 if __name__ == '__main__':
     # -----------------------------------------------------------------
     flags.mark_flags_as_required(
-        ['train_dir', 'labeled_volume_spec', 'unlabeled_volume_spec']
+        ['train_dir', 'labeled_volume_specs', 'unlabeled_volume_specs']
     )
 
     def main(argv):
+        flags_str = FLAGS.flags_into_string()
+        logging.info(f'train_secgan.py with flags:\n{flags_str}')
         with open(
             os.path.join(FLAGS.train_dir, 'flagfile.txt'), 'w'
         ) as flagfile:
-            flagfile.write(FLAGS.flags_into_string())
+            flagfile.write(flags_str)
         train_secgan(
-            FLAGS.labeled_volume_spec,
-            FLAGS.unlabeled_volume_spec,
+            FLAGS.labeled_volume_specs,
+            FLAGS.unlabeled_volume_specs,
             ffn_ckpt=FLAGS.ffn_ckpt,
             max_steps=FLAGS.max_steps,
             batch_size=FLAGS.batch_size,
@@ -236,6 +257,7 @@ if __name__ == '__main__':
             seg_enhanced=FLAGS.seg_enhanced,
             label_noise=FLAGS.label_noise,
             split_devices=FLAGS.split_devices,
+            seed_logit=FLAGS.seed_logit,
         )
 
     app.run(main)
