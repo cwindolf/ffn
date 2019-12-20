@@ -491,11 +491,18 @@ class SECGAN:
         F_optimizer = optimizer_from_flags()
         D_u_optimizer = optimizer_from_flags()
         D_S_and_l_optimizer = optimizer_from_flags()
+        self.optimizers = [
+            G_optimizer,
+            F_optimizer,
+            D_u_optimizer,
+            D_S_and_l_optimizer,
+        ]
 
         # Get some train ops
         # The fact is, everyone needs their own global step.
         # They specify this ordering, why not, let's enforce it.
         global_step = tf.train.get_or_create_global_step()
+        self.global_step = global_step
         G_grads_and_vars = G_optimizer.compute_gradients(
             G_total_loss, var_list=G_vars
         )
