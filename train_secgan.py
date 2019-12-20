@@ -1,4 +1,5 @@
-import os.path
+import os
+import time
 import logging
 import numpy as np
 import tensorflow as tf
@@ -9,58 +10,131 @@ from models.secgan import SECGAN
 from util.fakepool import FakePool
 
 
-# ------------------------------- flags -------------------------------
+# ---------------------------------------------------------------------
+# Flags
 
-# Training params
-flags.DEFINE_string('train_dir', None, 'Where to save decoder checkpoints.')
-flags.DEFINE_string('ffn_ckpt', None, 'Load this up as the encoder.')
-flags.DEFINE_integer('ffn_fov_size', 33, '')
-flags.DEFINE_integer('ffn_features_layer', 12, '')
-flags.DEFINE_integer('max_steps', 10000, 'Number of decoder train steps.')
-flags.DEFINE_integer('batch_size', 8, 'Simultaneous volumes.')
-flags.DEFINE_integer('fakepool_sz', 0, '')
-flags.DEFINE_boolean('split_devices', False, '')
+from training import secgan_flags  # noqa: W0611
 
-# Data
-flags.DEFINE_spaceseplist(
-    'labeled_volume_specs', None, 'Datspecs for labeled data volumes.'
+# Data parallel training options.
+# See also some of the training infra options above.
+flags.DEFINE_integer('task', 0, 'Task id of the replica running the training.')
+# flags.DEFINE_string('master', '', 'Network address of the master.')
+flags.DEFINE_integer('ps_tasks', 0, 'Number of tasks in the ps job.')
+flags.DEFINE_list(
+    'ps_hosts',
+    '',
+    'Parameter servers. Comma-separated list of ' '<hostname>:<port> pairs.',
 )
-flags.DEFINE_spaceseplist(
-    'unlabeled_volume_specs', None, 'Datspecs for unlabeled data volumes.'
+flags.DEFINE_list(
+    'worker_hosts',
+    '',
+    'Worker servers. Comma-separated list of ' '<hostname>:<port> pairs.',
 )
-
-# Model?
-flags.DEFINE_string('discriminator', 'resnet18', '')
-flags.DEFINE_float('cycle_l_lambda', 2.5, '')
-flags.DEFINE_float('cycle_u_lambda', 0.5, '')
-flags.DEFINE_float('generator_lambda', 1.0, '')
-flags.DEFINE_float('generator_seg_lambda', 1.0, '')
-flags.DEFINE_float('u_discriminator_lambda', 1.0, '')
-flags.DEFINE_float('l_discriminator_lambda', 1.0, '')
-flags.DEFINE_string('generator_norm', None, '')
-flags.DEFINE_string('discriminator_norm', 'instance', '')
-flags.DEFINE_boolean('disc_early_maxpool', False, '')
-flags.DEFINE_boolean('seg_enhanced', True, '')
-flags.DEFINE_boolean('generator_dropout', False, '')
-flags.DEFINE_integer('convdisc_depth', 3, '')
-flags.DEFINE_integer('generator_depth', 8, '')
-flags.DEFINE_integer('generator_channels', 32, '')
-flags.DEFINE_float('label_noise', 0.0, '')
-flags.DEFINE_boolean(
-    'seed_logit',
-    True,
-    'Evidence is fairly conclusive that one should not change this.',
+flags.DEFINE_enum(
+    'job_name',
+    'worker',
+    ['ps', 'worker'],
+    'Am I a parameter server or a worker?',
 )
-
 
 FLAGS = flags.FLAGS
 
+
 # ---------------------------------------------------------------------
+# Distributed support code
+
+# for done queue reference, see:
+# - https://github.com/tensorflow/tensorflow/issues/4713
+# - https://gist.github.com/yaroslavvb/ea1b1bae0a75c4aae593df7eca72d9ca
 
 
-def train_secgan(
+def create_done_queue(i):
+    with tf.device("/job:ps/task:%d" % i):
+        return tf.FIFOQueue(
+            len(FLAGS.worker_hosts),
+            tf.int32,
+            shared_name="done_queue" + str(i),
+        )
+
+
+def create_done_queues():
+    return [create_done_queue(i) for i in range(FLAGS.ps_tasks)]
+
+
+def get_cluster_spec():
+    '''
+    Convert the `{--ps_hosts,--worker_hosts}` flags into a definition of the
+    distributed cluster we're running on.
+
+    Returns:
+    None                  if these flags aren't present, which signals local
+                          training.
+    tf.train.ClusterSpec  describing the cluster otherwise
+    '''
+    logging.info(
+        '%s %d Building cluster from ps_hosts %s, worker_hosts %s'
+        % (FLAGS.job_name, FLAGS.task, FLAGS.ps_hosts, FLAGS.worker_hosts)
+    )
+    if not (FLAGS.ps_hosts or FLAGS.worker_hosts or FLAGS.ps_tasks):
+        return None
+    elif FLAGS.ps_hosts and FLAGS.worker_hosts and FLAGS.ps_tasks > 0:
+        cluster_spec = tf.train.ClusterSpec(
+            {'ps': FLAGS.ps_hosts, 'worker': FLAGS.worker_hosts}
+        )
+        return cluster_spec
+    else:
+        raise ValueError(
+            'Set either all or none of --ps_hosts, --worker_hosts, --ps_tasks'
+        )
+
+
+# ---------------------------------------------------------------------
+# Parameter server
+
+
+def secgan_parameter_server(cluster_spec=None):
+    # Distributed or local training server
+    if cluster_spec:
+        server = tf.train.Server(
+            cluster_spec, job_name=FLAGS.job_name, task_index=FLAGS.task
+        )
+    else:
+        server = tf.train.Server.create_local_server()
+
+    # Parameter servers wait for instructions
+    logging.info('Starting parameter server.')
+    queue = create_done_queue(FLAGS.task)
+    # Lots of times ps don't need a session -- this one does to
+    # listen to its done queue
+    sess = tf.Session(
+        server.target,
+        config=tf.ConfigProto(
+            log_device_placement=False, allow_soft_placement=True
+        ),
+    )
+
+    # Wait for quit queue signals from workers
+    for i in range(len(FLAGS.worker_hosts)):
+        sess.run(queue.dequeue())
+        logging.info('PS' + str(FLAGS.task) + ' got quit sig number ' + str(i))
+
+    # Quit
+    logging.info('PS' + str(FLAGS.task) + ' exiting.')
+    time.sleep(1.0)
+    time.sleep(1.0)
+    # For some reason the sess.close is hanging, this hard kill
+    # is the only way I can find to exit.
+    os._exit(0)
+
+
+# ---------------------------------------------------------------------
+# The actual training routine.
+
+
+def secgan_training_worker(
     labeled_volume_specs,
     unlabeled_volume_specs,
+    # Model flags
     ffn_ckpt=None,
     max_steps=10000,
     batch_size=8,
@@ -85,6 +159,9 @@ def train_secgan(
     label_noise=0.0,
     split_devices=False,
     seed_logit=True,
+    random_state=np.random,
+    # Distributed flags
+    cluster_spec=None,
 ):
     '''Run secgan training protocol.'''
     # Load data -------------------------------------------------------
@@ -98,12 +175,14 @@ def train_secgan(
             ffn_fov_size + 2 * generator_clip * generator_depth,
             image_mean=None,
             image_stddev=None,
+            random_state=random_state,
         )
     else:
         batches_L = inputs.multi_random_fovs(
             labeled_volume_specs,
             batch_size,
             ffn_fov_size + 2 * generator_clip * generator_depth,
+            random_state=random_state,
         )
     if len(unlabeled_volume_specs) == 1:
         batches_U = inputs.random_fovs(
@@ -112,13 +191,16 @@ def train_secgan(
             ffn_fov_size + 2 * generator_clip * generator_depth,
             image_mean=None,
             image_stddev=None,
+            random_state=random_state,
         )
     else:
         batches_U = inputs.multi_random_fovs(
             unlabeled_volume_specs,
             batch_size,
             ffn_fov_size + 2 * generator_clip * generator_depth,
+            random_state=random_state,
         )
+    batches_LU = zip(batches_L, batches_U)
 
     # Make seed
     seed = inputs.fixed_seed_batch(
@@ -165,78 +247,167 @@ def train_secgan(
     )
 
     # Enter TF world --------------------------------------------------
+
+    # Some infrastructure
+    is_chief = FLAGS.task == 0
+    if cluster_spec:
+        server = tf.train.Server(
+            cluster_spec, job_name=FLAGS.job_name, task_index=FLAGS.task
+        )
+    else:
+        server = tf.train.Server.create_local_server()
+
     with tf.Graph().as_default():
-        # Init model graph
-        logging.info('Building graph...')
-        secgan.define_tf_graph()
+        # If distributed, make ops to coordinate shutdown
+        if cluster_spec:
+            done_ops = []
+            with tf.device('/job:worker/task:%d' % FLAGS.task):
+                done_msg = f'Worker {FLAGS.task} signaling parameter servers'
+                done_ops = [q.enqueue(1) for q in create_done_queues()] + [
+                    tf.Print(tf.constant(0), [], message=done_msg)
+                ]
 
-        # Training machinery
-        scaffold = tf.train.Scaffold(
-            saver=secgan.saver, summary_op=tf.summary.merge_all()
-        )
-        config = tf.ConfigProto(
-            log_device_placement=False, allow_soft_placement=True
-        )
-        with tf.train.MonitoredTrainingSession(
-            config=config,
-            scaffold=scaffold,
-            checkpoint_dir=FLAGS.train_dir,
-            save_summaries_secs=30,
-            save_checkpoint_secs=600,
-        ) as sess:
-            # Get some initial images to start off the pool.
-            batch_L_0 = next(batches_L)
-            batch_U_0 = next(batches_U)
-            fake_0 = np.zeros(secgan.disc_input_shape, dtype=np.float32)
-            gen_L, gen_U = sess.run(
-                [secgan.generated_labeled, secgan.generated_unlabeled],
-                feed_dict={
-                    secgan.input_labeled: batch_L_0,
-                    secgan.input_unlabeled: batch_U_0,
-                    # Need to be supplied but won't do anything since
-                    # we are not running the train op.
-                    secgan.fake_labeled: fake_0,
-                    secgan.fake_unlabeled: fake_0,
-                },
+        # Handle lots of devices
+        with tf.device(
+            tf.train.replica_device_setter(
+                ps_tasks=FLAGS.ps_tasks,
+                cluster=cluster_spec,
+                merge_devices=True,
             )
+        ):
+            # In some situations, we will add hooks.
+            hooks = []
 
-            # Now we can iterate happily.
-            for i, (batch_L, batch_U) in enumerate(zip(batches_L, batches_U)):
-                # run train op
-                _, gen_L, gen_U = sess.run(
-                    [
-                        secgan.train_op,
-                        secgan.generated_labeled,
-                        secgan.generated_unlabeled,
-                    ],
-                    feed_dict={
-                        secgan.input_labeled: batch_L,
-                        secgan.input_unlabeled: batch_U,
-                        secgan.fake_labeled: pool_L.query(gen_L),
-                        secgan.fake_unlabeled: pool_U.query(gen_U),
-                    },
+            if cluster_spec:
+                # If distributed, make sure the done queue ops run.
+                hooks.append(tf.train.FinalOpsHook(done_ops))
+
+            # Support for synchronous optimizers
+            if FLAGS.synchronous:
+                print(f'Running with a synchronous optimizer')
+                hooks += (
+                    opt.make_session_run_hook(is_chief, num_tokens=0)
+                    for opt in secgan.optimizers
                 )
 
-                if i > max_steps:
-                    print('Reached max_steps', i)
-                    break
+            # Distributed communication
+            device_filters = None
+            if cluster_spec:
+                device_filters = [
+                    '/job:ps',
+                    '/job:worker/task:%d' % FLAGS.task,
+                ]
+
+            # Init model graph
+            logging.info('Building graph...')
+            secgan.define_tf_graph()
+
+            # Training machinery
+            scaffold = tf.train.Scaffold(
+                saver=secgan.saver,
+                summary_op=tf.Print(
+                    tf.summary.merge_all(),
+                    secgan.global_step,
+                    message='Saving summaries at step',
+                ),
+            )
+            config = tf.ConfigProto(
+                log_device_placement=False,
+                allow_soft_placement=True,
+                device_filters=device_filters,
+            )
+            with tf.train.MonitoredTrainingSession(
+                master=server.target,
+                is_chief=is_chief,
+                config=config,
+                scaffold=scaffold,
+                checkpoint_dir=FLAGS.train_dir,
+                save_summaries_secs=120,
+                save_checkpoint_secs=300,
+                hooks=hooks,
+            ) as sess:
+                # If we're not the chief, wait around a bit.
+                if not is_chief:
+                    while not FLAGS.synchronous:
+                        time.sleep(5.0)
+                        step = int(sess.run(secgan.global_step))
+                        if step < FLAGS.replica_step_delay * FLAGS.task:
+                            break
+                    logging.info(f'Worker task {FLAGS.task} coming online')
+
+                # Get some initial generated images, since they are
+                # needed to run the train op.
+                batch_L_0, batch_U_0 = next(batches_LU)
+                fake_0 = np.zeros(secgan.disc_input_shape, dtype=np.float32)
+                gen_L, gen_U = sess.run(
+                    [secgan.generated_labeled, secgan.generated_unlabeled],
+                    feed_dict={
+                        secgan.input_labeled: batch_L_0,
+                        secgan.input_unlabeled: batch_U_0,
+                        # Need to be supplied but won't do anything since
+                        # we are not running the train op.
+                        secgan.fake_labeled: fake_0,
+                        secgan.fake_unlabeled: fake_0,
+                    },
+                )
+                del fake_0, batch_L_0, batch_U_0
+
+                # Now we can iterate happily.
+                for i, (batch_L, batch_U) in enumerate(batches_LU):
+                    # run train op, get new gens.
+                    _, gen_L, gen_U = sess.run(
+                        [
+                            secgan.train_op,
+                            secgan.generated_labeled,
+                            secgan.generated_unlabeled,
+                        ],
+                        feed_dict={
+                            secgan.input_labeled: batch_L,
+                            secgan.input_unlabeled: batch_U,
+                            secgan.fake_labeled: pool_L.query(gen_L),
+                            secgan.fake_unlabeled: pool_U.query(gen_U),
+                        },
+                    )
+
+                    if i > max_steps:
+                        print('Reached max_steps', i)
+                        break
+
+                    if sess.should_stop():
+                        print('Session said stop at step', i)
+                        break
 
 
 # ---------------------------------------------------------------------
-if __name__ == '__main__':
-    # -----------------------------------------------------------------
-    flags.mark_flags_as_required(
-        ['train_dir', 'labeled_volume_specs', 'unlabeled_volume_specs']
-    )
+# Main
 
-    def main(argv):
+
+def main(argv):
+    is_chief = FLAGS.job_name == 'worker' and FLAGS.task == 0
+
+    # Log info about the run
+    if is_chief:
         flags_str = FLAGS.flags_into_string()
         logging.info(f'train_secgan.py with flags:\n{flags_str}')
         with open(
             os.path.join(FLAGS.train_dir, 'flagfile.txt'), 'w'
         ) as flagfile:
             flagfile.write(flags_str)
-        train_secgan(
+
+    # Seed np random so batches aren't the same
+    seed = int(time.time() * 1000 + FLAGS.task * 3600 * 24)
+    logging.info('Random seed: %r', seed)
+    random_state = np.random.RandomState(seed)
+
+    # Figure out the world
+    cluster_spec = get_cluster_spec()
+    if cluster_spec is not None:
+        assert not FLAGS.split_devices
+
+    if FLAGS.job_name == 'ps':
+        secgan_parameter_server(cluster_spec)
+    elif FLAGS.job_name == 'worker':
+        secgan_training_worker(
             FLAGS.labeled_volume_specs,
             FLAGS.unlabeled_volume_specs,
             ffn_ckpt=FLAGS.ffn_ckpt,
@@ -262,6 +433,17 @@ if __name__ == '__main__':
             label_noise=FLAGS.label_noise,
             split_devices=FLAGS.split_devices,
             seed_logit=FLAGS.seed_logit,
+            random_state=random_state,
         )
+    else:
+        assert False
+
+
+# ---------------------------------------------------------------------
+if __name__ == '__main__':
+    # -----------------------------------------------------------------
+    flags.mark_flags_as_required(
+        ['train_dir', 'labeled_volume_specs', 'unlabeled_volume_specs']
+    )
 
     app.run(main)
