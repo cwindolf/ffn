@@ -353,10 +353,12 @@ def define_data_input(model, queue_batch=None, val=False):
   data_shape = [1] + image_size[::-1] + [1]
   patch = tf.reshape(patch, shape=data_shape)
 
-  if ((FLAGS.image_stddev is None or FLAGS.image_mean is None) and
+  if ((FLAGS.image_stddev is None and FLAGS.image_mean is None) and
       not FLAGS.image_offset_scale_map):
     raise ValueError('--image_mean, --image_stddev or --image_offset_scale_map '
                      'need to be defined')
+  elif not FLAGS.image_offset_scale_map and FLAGS.image_stddev is not None:
+    logginf.info('Got --image_stddev but not --image_mean')
 
   # Convert segmentation into a soft object mask.
   lom = tf.logical_and(
