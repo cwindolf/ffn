@@ -5,6 +5,7 @@ from absl import flags
 from absl import app
 from ffn.training import optimizer  # noqa: W0611
 from training import secgan_flags  # noqa: W0611
+import logging
 
 
 # ------------------------------- flags -------------------------------
@@ -69,6 +70,8 @@ def launcher(train_flags, optimizer_flags):
             # Launch nodes
             'python',
             'secgan_slurm_buddy.py',
+            '--run_name',
+            FLAGS.run_name,
             '--role',
             'node',
             '--num_ps',
@@ -77,8 +80,6 @@ def launcher(train_flags, optimizer_flags):
             str(FLAGS.ps_port),
             '--worker_port_min',
             str(FLAGS.worker_port_min),
-            '--node_log_dir',
-            os.path.join(FLAGS.base_folder, FLAGS.run_name),
         ]
         + train_flags
         + optimizer_flags
@@ -109,7 +110,7 @@ def build_cluster_args():
     assert gpus_res.returncode == 0
     # Subtract 1 for trailing newline
     n_gpus = len(gpus_res.stdout.decode().split('\n')) - 1
-    print(me, 'found', n_gpus, 'gpus')
+    logging.info(f'{me} found n_gpus={n_gpus}')
 
     # Figure out which nodes will be running parameter servers
     num_nodes = len(hostnames)
@@ -118,7 +119,7 @@ def build_cluster_args():
     # The args themselves
     ps_task = str(node_idx)
     ps_hostnames = hostnames[0 : FLAGS.num_ps]
-    print(f'parameter server hosts: {ps_hostnames}')
+    logging.info(f'parameter server hosts: {ps_hostnames}')
     run_ps = me in ps_hostnames
     ps_hosts = ','.join(f'{host}:{FLAGS.ps_port}' for host in ps_hostnames)
 
@@ -164,110 +165,68 @@ def launch_procs(
     worker_gpu_inds,
     ps_hosts,
     worker_hosts,
-    num_nodes,
 ):
     '''
     Launch one worker for each GPU, and a parameter server if `run_ps`.
+    Returns `processes`, all of the popen objects.
     '''
-    start_chief = False
-    worker_procs = []
+    processes = []
+    start_synchronous_chief = False
+    common_args = (
+        [
+            'python',
+            'train_secgan.py',
+            '--ps_tasks',
+            str(FLAGS.num_ps),
+            '--ps_hosts',
+            ps_hosts,
+            '--worker_hosts',
+            worker_hosts,
+            '--train_dir',
+            os.path.join(FLAGS.base_folder, FLAGS.run_name),
+        ]
+        + train_flags
+        + optimizer_flags
+    )
+
+    # Launch workers
     for worker_task, gpu_idx in zip(worker_tasks, worker_gpu_inds):
         if FLAGS.synchronous and worker_task == 0:
             # Delay the chief worker
-            start_chief = True
+            start_synchronous_chief = True
             chief_gpu = gpu_idx
             continue
 
         worker_env = os.environ.copy()
         worker_env['CUDA_VISIBLE_DEVICES'] = str(gpu_idx)
-
         worker_proc = subprocess.Popen(
-            [
-                'python',
-                'train_secgan.py',
-                # Cluster config
-                '--job_name',
-                'worker',  # !
-                '--task',
-                str(worker_task),
-                '--ps_tasks',
-                str(FLAGS.num_ps),
-                '--ps_hosts',
-                ps_hosts,
-                '--worker_hosts',
-                worker_hosts,
-                '--train_dir',
-                os.path.join(FLAGS.base_folder, FLAGS.run_name),
-            ]
-            + train_flags
-            + optimizer_flags,
+            common_args + ['--job_name', 'worker', '--task', str(worker_task)],
             env=worker_env,
         )
+        processes.append(worker_proc)
 
-        worker_procs.append(worker_proc)
-
-    # Parameter server
-    ps_procs = []
+    # Launch parameter server
     if run_ps:
         ps_env = os.environ.copy()
         ps_env['CUDA_VISIBLE_DEVICES'] = ''
-
         ps_proc = subprocess.Popen(
-            [
-                'python',
-                'train_secgan.py',
-                # Cluster config
-                '--job_name',
-                'ps',  # !
-                '--task',
-                ps_task,
-                '--ps_tasks',
-                str(FLAGS.num_ps),
-                '--ps_hosts',
-                ps_hosts,
-                '--worker_hosts',
-                worker_hosts,
-                '--train_dir',
-                os.path.join(FLAGS.base_folder, FLAGS.run_name),
-            ]
-            + train_flags
-            + optimizer_flags,
-            env=ps_env,
+            common_args + ['--job_name', 'ps', '--task', ps_task], env=ps_env
         )
+        processes.append(ps_proc)
 
-        ps_procs.append(ps_proc)
-
-    if start_chief:
+    # Launch synchronous chief
+    if start_synchronous_chief:
+        # Give other workers time to build their graphs
         time.sleep(60.0)
         worker_env = os.environ.copy()
         worker_env['CUDA_VISIBLE_DEVICES'] = str(chief_gpu)
-
         worker_proc = subprocess.Popen(
-            [
-                'python',
-                'train_secgan.py',
-                # Cluster config
-                '--job_name',
-                'worker',  # !
-                '--task',
-                '0',
-                '--ps_tasks',
-                str(FLAGS.num_ps),
-                '--ps_hosts',
-                ps_hosts,
-                '--worker_hosts',
-                worker_hosts,
-                '--train_dir',
-                os.path.join(FLAGS.base_folder, FLAGS.run_name),
-            ]
-            + train_flags
-            + optimizer_flags,
+            common_args + ['--job_name', 'worker', '--task', '0'],
             env=worker_env,
         )
+        processes.append(worker_proc)
 
-        worker_procs.append(worker_proc)
-
-    return worker_procs + ps_procs
+    return processes
 
 
 def node(train_flags, optimizer_flags):
@@ -294,7 +253,6 @@ def node(train_flags, optimizer_flags):
         worker_gpu_inds,
         ps_hosts,
         worker_hosts,
-        num_nodes,
     )
 
     # Wait for join and log GPU usage
@@ -304,7 +262,8 @@ def node(train_flags, optimizer_flags):
 
     # Done now.
     for proc in procs:
-        print(proc, proc.communicate())
+        logging.info(str(proc))
+        logging.info(str(proc.communicate()))
 
 
 # ------------------------------- main --------------------------------
@@ -315,7 +274,7 @@ def main(argv):
     module_dict = FLAGS.flags_by_module_dict()
     train_flags = [
         f.serialize()
-        for f in module_dict['training.training_flags']
+        for f in module_dict['training.secgan_flags']
         if f.present
     ]
     optimizer_flags = [
@@ -331,7 +290,7 @@ def main(argv):
         )
 
     # Make sure train folder exists
-    os.makedirs(os.path.join(FLAGS.base_folder, FLAGS.run_name))
+    os.makedirs(os.path.join(FLAGS.base_folder, FLAGS.run_name), exist_ok=True)
 
     # Launch or run node
     if FLAGS.role == 'launcher':
