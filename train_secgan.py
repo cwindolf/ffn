@@ -36,6 +36,7 @@ flags.DEFINE_enum(
     ['ps', 'worker'],
     'Am I a parameter server or a worker?',
 )
+flags.DEFINE_integer('replica_step_delay', 100, '')
 
 FLAGS = flags.FLAGS
 
@@ -157,7 +158,6 @@ def secgan_training_worker(
     generator_dropout=False,
     seg_enhanced=True,
     label_noise=0.0,
-    split_devices=False,
     seed_logit=True,
     random_state=np.random,
     # Distributed flags
@@ -241,9 +241,6 @@ def secgan_training_worker(
         generator_dropout=generator_dropout,
         seg_enhanced=seg_enhanced,
         label_noise=label_noise,
-        F_device=0 if split_devices else None,
-        G_device=1 if split_devices else None,
-        S_device=0 if split_devices else None,
     )
 
     # Enter TF world --------------------------------------------------
@@ -282,14 +279,6 @@ def secgan_training_worker(
                 # If distributed, make sure the done queue ops run.
                 hooks.append(tf.train.FinalOpsHook(done_ops))
 
-            # Support for synchronous optimizers
-            if FLAGS.synchronous:
-                print(f'Running with a synchronous optimizer')
-                hooks += (
-                    opt.make_session_run_hook(is_chief, num_tokens=0)
-                    for opt in secgan.optimizers
-                )
-
             # Distributed communication
             device_filters = None
             if cluster_spec:
@@ -302,13 +291,39 @@ def secgan_training_worker(
             logging.info('Building graph...')
             secgan.define_tf_graph()
 
+            # We'll need the feed dict all over the place.
+            # What a pain.
+            batch_L_0, batch_U_0 = next(batches_LU)
+            feed_dict = {
+                secgan.input_labeled: batch_L_0,
+                secgan.input_unlabeled: batch_U_0,
+                # Need to be supplied but won't do anything since
+                # we are not running the train op.
+                secgan.fake_labeled: np.empty(
+                    secgan.disc_input_shape, dtype=np.float32
+                ),
+                secgan.fake_unlabeled: np.empty(
+                    secgan.disc_input_shape, dtype=np.float32
+                ),
+            }
+            fd = [feed_dict]
+
+            # Support for synchronous optimizers
+            if FLAGS.synchronous:
+                print(f'Running with a synchronous optimizer')
+                hooks += [tf.train.FeedFnHook(lambda: fd[0])]
+                hooks += (
+                    opt.make_session_run_hook(is_chief, num_tokens=0)
+                    for opt in secgan.optimizers
+                )
+
             # Training machinery
             scaffold = tf.train.Scaffold(
                 saver=secgan.saver,
                 summary_op=tf.Print(
                     tf.summary.merge_all(),
-                    secgan.global_step,
-                    message='Saving summaries at step',
+                    [secgan.global_step],
+                    message='Saving summaries at step ',
                 ),
             )
             config = tf.ConfigProto(
@@ -331,29 +346,28 @@ def secgan_training_worker(
                     while not FLAGS.synchronous:
                         time.sleep(5.0)
                         step = int(sess.run(secgan.global_step))
-                        if step < FLAGS.replica_step_delay * FLAGS.task:
+                        if step > FLAGS.replica_step_delay * FLAGS.task:
                             break
                     logging.info(f'Worker task {FLAGS.task} coming online')
 
                 # Get some initial generated images, since they are
                 # needed to run the train op.
-                batch_L_0, batch_U_0 = next(batches_LU)
-                fake_0 = np.zeros(secgan.disc_input_shape, dtype=np.float32)
                 gen_L, gen_U = sess.run(
                     [secgan.generated_labeled, secgan.generated_unlabeled],
-                    feed_dict={
-                        secgan.input_labeled: batch_L_0,
-                        secgan.input_unlabeled: batch_U_0,
-                        # Need to be supplied but won't do anything since
-                        # we are not running the train op.
-                        secgan.fake_labeled: fake_0,
-                        secgan.fake_unlabeled: fake_0,
-                    },
+                    feed_dict=feed_dict,
                 )
-                del fake_0, batch_L_0, batch_U_0
 
                 # Now we can iterate happily.
                 for i, (batch_L, batch_U) in enumerate(batches_LU):
+                    # Update feeds
+                    feed_dict = {
+                        secgan.input_labeled: batch_L,
+                        secgan.input_unlabeled: batch_U,
+                        secgan.fake_labeled: pool_L.query(gen_L),
+                        secgan.fake_unlabeled: pool_U.query(gen_U),
+                    }
+                    fd[0] = feed_dict
+
                     # run train op, get new gens.
                     _, gen_L, gen_U = sess.run(
                         [
@@ -361,12 +375,7 @@ def secgan_training_worker(
                             secgan.generated_labeled,
                             secgan.generated_unlabeled,
                         ],
-                        feed_dict={
-                            secgan.input_labeled: batch_L,
-                            secgan.input_unlabeled: batch_U,
-                            secgan.fake_labeled: pool_L.query(gen_L),
-                            secgan.fake_unlabeled: pool_U.query(gen_U),
-                        },
+                        feed_dict=feed_dict,
                     )
 
                     if i > max_steps:
@@ -395,14 +404,12 @@ def main(argv):
             flagfile.write(flags_str)
 
     # Seed np random so batches aren't the same
-    seed = int(time.time() * 1000 + FLAGS.task * 3600 * 24)
+    seed = int((time.time() * 1000 + FLAGS.task * 3600 * 24) % (2 ** 32))
     logging.info('Random seed: %r', seed)
     random_state = np.random.RandomState(seed)
 
     # Figure out the world
     cluster_spec = get_cluster_spec()
-    if cluster_spec is not None:
-        assert not FLAGS.split_devices
 
     if FLAGS.job_name == 'ps':
         secgan_parameter_server(cluster_spec)
@@ -431,9 +438,9 @@ def main(argv):
             generator_dropout=FLAGS.generator_dropout,
             seg_enhanced=FLAGS.seg_enhanced,
             label_noise=FLAGS.label_noise,
-            split_devices=FLAGS.split_devices,
             seed_logit=FLAGS.seed_logit,
             random_state=random_state,
+            cluster_spec=cluster_spec,
         )
     else:
         assert False
