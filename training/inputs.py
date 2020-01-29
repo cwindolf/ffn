@@ -60,9 +60,10 @@ def random_fovs(
     else:
         # Map to [-1, 1]
         logging.info(f'No image_mean passed when loading {volume_spec}')
-        logging.info(f'Using secgan preprocessing.')
-        volume /= 127.5
-        volume -= 1.0
+        logging.info(f'Not preprocessing!!')
+        # Please, DIY.
+        # volume /= 127.5
+        # volume -= 1.0
 
     # Stride with fov_size to get patches
     all_fovs = view_as_windows(volume, fov_size)
