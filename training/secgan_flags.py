@@ -8,7 +8,6 @@ flags.DEFINE_integer('ffn_features_layer', 12, '')
 flags.DEFINE_integer('max_steps', 10000, 'Number of decoder train steps.')
 flags.DEFINE_integer('batch_size', 8, 'Simultaneous volumes.')
 flags.DEFINE_integer('fakepool_sz', 0, '')
-flags.DEFINE_boolean('split_devices', False, '')
 
 # Data
 flags.DEFINE_spaceseplist(
