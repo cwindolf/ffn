@@ -281,6 +281,8 @@ class PolicyInvertOrigins(BaseSeedPolicy):
     origins_to_invert = storage.load_origins(self.segmentation_dir,
                                              self.corner)
     points = origins_to_invert.items()
-    points.sort(reverse=True)
+    points = sorted(list(points), reverse=True)
     self.coords = np.array([origin_info.start_zyx for _, origin_info
                             in points])
+    logging.info('InvertOrigins found origins: %r', self.coords)
+

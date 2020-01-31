@@ -187,6 +187,7 @@ class ThreadingBatchExecutor(BatchExecutor):
             data = self.input_queue.get(timeout=5)
           except queue.Empty:
             continue
+
           if data == 'exit':
             logging.info('Executor shut down requested.')
             return
@@ -199,6 +200,9 @@ class ThreadingBatchExecutor(BatchExecutor):
             else:
               logging.info('client %d terminating', -client_id - 1)
               self.active_clients -= 1
+            logging.info(
+              'now %d active clients and %d total out of %d expected',
+              self.active_clients, self.total_clients, self.expected_clients)
           else:
             client_id, seed, image, fetches = data
             l = len(ready)

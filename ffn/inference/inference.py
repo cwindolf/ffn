@@ -36,7 +36,7 @@ import tensorflow as tf
 
 from tensorflow import gfile
 from . import align
-from . import executor
+from . import executor as executor_
 from . import inference_pb2
 from . import inference_utils
 from . import movement
@@ -563,10 +563,12 @@ class Canvas(object):
       seed_policy: callable taking the image and the canvas object as arguments
           and returning an iterator over proposed seed point.
     """
+    logging.info('Segment all')
     self.seed_policy = seed_policy(self)
     if self._seed_policy_state is not None:
       self.seed_policy.set_state(self._seed_policy_state)
       self._seed_policy_state = None
+    logging.info(f'Seed policy {self.seed_policy}')
 
     with timer_counter(self.counters, 'segment_all'):
       mbd = self.options.min_boundary_dist
@@ -720,7 +722,7 @@ class Canvas(object):
     """Restores state from the checkpoint at `path`."""
     self.log_info('Restoring inference checkpoint: %s', path)
     with gfile.Open(path, 'rb') as f:
-      data = np.load(f)
+      data = np.load(f, allow_pickle=True)
 
       self.segmentation[:] = data['segmentation']
       self.seed[:] = data['seed']
@@ -823,7 +825,8 @@ class Runner(object):
       self.model.saver.restore(self.session, checkpoint_path)
       logging.info('Checkpoint loaded.')
 
-  def start(self, request, batch_size=1, exec_cls=None, session=None):
+  def start(self, request, exec_cls=None, session=None, model=None,
+            executor=None, executor_expected_clients=1):
     """Opens input volumes and initializes the FFN."""
     self.request = request
     assert self.request.segmentation_output_dir
@@ -891,24 +894,36 @@ class Runner(object):
     logging.info('Available TF devices: %r', self.session.list_devices())
 
     # Initialize the FFN model.
-    model_class = import_symbol(request.model_name)
-    if request.model_args:
-      args = json.loads(request.model_args)
-    else:
-      args = {}
+    if model is None:
+      model_class = import_symbol(request.model_name)
+      if request.model_args:
+        args = json.loads(request.model_args)
+      else:
+        args = {}
 
-    args['batch_size'] = batch_size
-    self.model = model_class(**args)
+      args['batch_size'] = request.batch_size
+      self.model = model_class(**args)
+    else:
+      self.model = model
 
     if exec_cls is None:
-      exec_cls = executor.ThreadingBatchExecutor
+      exec_cls = executor_.ThreadingBatchExecutor
 
-    self.executor = exec_cls(
-        self.model, self.session, self.counters, batch_size)
+    if executor is None:
+      self.executor = exec_cls(
+          self.model, self.session, self.counters, request.batch_size,
+          expected_clients=executor_expected_clients)
+    else:
+      self.executor = executor
+
     self.movement_policy_fn = movement.get_policy_fn(request, self.model)
 
-    self.saver = tf.train.Saver()
-    self._load_model_checkpoint(request.model_checkpoint_path)
+    if model is None:
+      self.saver = tf.train.Saver()
+      self._load_model_checkpoint(request.model_checkpoint_path)
+
+      if hasattr(self.model, 'init_op'):
+        self.session.run(self.model.init_op, feed_dict=self.model.init_feed_dict)
 
     self.executor.start_server()
 
@@ -1115,6 +1130,7 @@ class Runner(object):
       A callable for generating seed policies.
     """
     policy_cls = getattr(seed, self.request.seed_policy)
+    logging.info(f'Using policy class {policy_cls}')
     kwargs = {'corner': corner, 'subvol_size': subvol_size}
     if self.request.seed_policy_args:
       kwargs.update(json.loads(self.request.seed_policy_args))
@@ -1195,6 +1211,7 @@ class Runner(object):
       return None
 
     canvas, alignment = self.make_canvas(corner, subvol_size)
+    logging.info(f'Client got canvas {canvas}')
     if canvas is None:
       return None
 
@@ -1207,6 +1224,7 @@ class Runner(object):
       with storage.atomic_file(image_path) as fd:
         np.savez_compressed(fd, im=canvas.image)
 
+    logging.info(f'Client starting segmentation')
     canvas.segment_all(seed_policy=self.get_seed_policy(corner, subvol_size))
     self.save_segmentation(canvas, alignment, seg_path, prob_path)
 
