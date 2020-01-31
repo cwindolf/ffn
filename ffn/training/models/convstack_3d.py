@@ -66,6 +66,8 @@ class ConvStack3DFFNModel(model.FFNModel):
 
     net = tf.concat([self.input_patches, self.input_seed], 4)
 
+    self.input_patches_and_seed = net
+
     with tf.variable_scope('seed_update', reuse=False):
       logit_update = _predict_object_mask(net, self.depth)
 
