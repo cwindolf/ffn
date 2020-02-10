@@ -96,6 +96,7 @@ def infer():
             text_format.Parse(bbox_f.read(), outer_bbox_pb)
     # Cast to fancy bounding box with subvolume calculations
     outer_bbox = bounding_box.BoundingBox(outer_bbox_pb)
+    print(outer_bbox)
 
     # Subvolumes ------------------------------------------------------
     if FLAGS.subvolume_size < 0:
@@ -109,6 +110,8 @@ def infer():
         outer_bbox, svsize, [FLAGS.subvolume_overlap] * 3
     )
     nsb = svcalc.num_sub_boxes()
+    print('Total nsb', nsb)
+    print(svcalc.total_sub_boxes_xyz)
     subvols = svcalc.generate_sub_boxes()
 
     # If we are one of many workers, take the ith subvol
@@ -140,7 +143,7 @@ def infer():
         executor_expected_clients=len(requests) * nsb,
     )
     runners = [runner0]
-    for request in requests:
+    for request in requests[1:]:
         runner = inference.Runner()
         runner.start(
             request,
