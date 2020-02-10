@@ -58,7 +58,7 @@ def make_labels_contiguous(labels):
   relabel = scipy.sparse.csr_matrix((new_ids, (row_indices, col_indices)))
   # Index with a 2D array so that the output is a sparse matrix.
   labels2d = labels.reshape(1, labels.size)
-  relabeled = relabel[0, labels2d]
+  relabeled = relabel[[0], labels2d]
   return relabeled.toarray().reshape(labels.shape), zip(orig_ids, new_ids)
 
 
@@ -161,6 +161,43 @@ def clean_up(seg, split_cc=True, min_size=0, return_id_map=False):  # pylint: di
     return cc_to_orig
 
 
+def remap_input(x):
+  """Remaps `x` if needed to fit within a 32-bit ID space.
+
+  Args:
+    x: uint64 numpy array.
+
+  Returns:
+    `remapped, max_id, orig_values_map`, where:
+
+      `remapped` contains the remapped version of `x` containing only
+      values < 2**32.
+
+      `max_id = x.max()`.
+
+      `orig_values_map` is None if `remapped == x`, or otherwise an array such
+      that `x = orig_values_map[remapped]`.
+  Raises:
+    TypeError: if `x` does not have uint64 dtype
+    ValueError: if `x.max() > 2**32-1`.
+  """
+  if x.dtype != np.uint64:
+    raise TypeError
+  max_uint32 = 2**32 - 1
+  max_id = x.max()
+  orig_values_map = None
+  if max_id > max_uint32:
+    orig_values_map, x = np.unique(x, return_inverse=True)
+    if len(orig_values_map) > max_uint32:
+      raise ValueError('More than 2**32-1 unique labels not supported')
+    x = np.cast[np.uint64](x)
+    if orig_values_map[0] != 0:
+      orig_values_map = np.concatenate(
+          [np.array([0], dtype=np.uint64), orig_values_map])
+      x[...] += 1
+  return x, max_id, orig_values_map
+
+
 def split_segmentation_by_intersection(a, b, min_size):
   """Computes the intersection of two segmentations.
 
@@ -193,42 +230,6 @@ def split_segmentation_by_intersection(a, b, min_size):
   output_array = a
 
   b = b.ravel()
-
-  def remap_input(x):
-    """Remaps `x` if needed to fit within a 32-bit ID space.
-
-    Args:
-      x: uint64 numpy array.
-
-    Returns:
-      `remapped, max_id, orig_values_map`, where:
-
-        `remapped` contains the remapped version of `x` containing only
-        values < 2**32.
-
-        `max_id = x.max()`.
-
-        `orig_values_map` is None if `remapped == x`, or otherwise an array such
-        that `x = orig_values_map[remapped]`.
-    Raises:
-      TypeError: if `x` does not have uint64 dtype
-      ValueError: if `x.max() > 2**32-1`.
-    """
-    if x.dtype != np.uint64:
-      raise TypeError
-    max_uint32 = 2**32 - 1
-    max_id = x.max()
-    orig_values_map = None
-    if max_id > max_uint32:
-      orig_values_map, x = np.unique(x, return_inverse=True)
-      if len(orig_values_map) > max_uint32:
-        raise ValueError('More than 2**32-1 unique labels not supported')
-      x = np.cast[np.uint64](x)
-      if orig_values_map[0] != 0:
-        orig_values_map = np.concatenate(
-            [np.array([0], dtype=np.uint64), orig_values_map])
-        x[...] += 1
-    return x, max_id, orig_values_map
 
   remapped_a, max_id, a_reverse_map = remap_input(a)
   remapped_b, _, _ = remap_input(b)
