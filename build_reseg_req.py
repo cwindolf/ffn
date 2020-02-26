@@ -69,9 +69,11 @@ flags.DEFINE_string(
 
 flags.DEFINE_string(
     "inference_request",
-    None,
+    "",
     "The path to an InferenceRequest proto that will configure "
-    "the inference runner used to run this ResegmentationRequest.",
+    "the inference runner used to run this ResegmentationRequest. "
+    "Optional -- if you don't supply it, you'll just need to edit "
+    "the output proto.",
 )
 flags.DEFINE_string(
     "bounding_box",
@@ -134,6 +136,9 @@ def _edt_helper(segmentation__segid):
     return ndimage.distance_transform_edt(segmentation == segid)
 
 
+root2_on_2 = 0.5 * np.sqrt(2.0)
+
+
 class SpatialHashingPairDetector:
     """Spatial hashing for segmentation overlap + closest approach
 
@@ -160,10 +165,11 @@ class SpatialHashingPairDetector:
         logging.info("Detecting pairs.")
 
         # Get the subvolumes
+        overlap = [2 * FLAGS.max_distance] * 3
         svcalc = bounding_box.OrderlyOverlappingCalculator(
             bbox,
-            (bucket_size, bucket_size, bucket_size),
-            (FLAGS.max_distance, FLAGS.max_distance, FLAGS.max_distance),
+            [bucket_size, bucket_size, bucket_size],
+            overlap,
             include_small_sub_boxes=True,
         )
 
@@ -192,13 +198,13 @@ class SpatialHashingPairDetector:
                 segids_at_sv = np.unique(seg_at_sv)
 
                 # Update our segid set
-                segids |= segids_at_sv
+                segids.update(segids_at_sv)
 
                 # Compute EDTs to help later compute the approach
                 # points
                 edts = pool.map(
                     _edt_helper,
-                    zip(repeat(seg_at_sv, segids_at_sv)),
+                    zip(repeat(seg_at_sv), segids_at_sv),
                 )
 
                 # Update pair approach tracker
@@ -214,8 +220,12 @@ class SpatialHashingPairDetector:
                         other_edt = edts[k]
 
                         # Mask out non-equidistant points
+                        # sqrt(2)/2 considers points equidistant when the true
+                        # equidistant point is halfway between them (even on
+                        # the diagonal) so that we don't miss any equidistant
+                        # points due to grid effects.
                         equis = np.where(
-                            np.isclose(segid_edt, other_edt),
+                            np.isclose(segid_edt, other_edt, atol=root2_on_2),
                             segid_edt,
                             np.inf,
                         )
@@ -281,8 +291,9 @@ class SpatialHashingPairDetector:
 def main(unused_argv):
     # Load up inference request
     inference_request = inference_pb2.InferenceRequest()
-    with open(FLAGS.inference_request) as inference_request_f:
-        text_format.Parse(inference_request_f.read(), inference_request)
+    if FLAGS.inference_request:
+        with open(FLAGS.inference_request) as inference_request_f:
+            text_format.Parse(inference_request_f.read(), inference_request)
 
     # Load up bounding box
     # We compute pair resegmentation points for all neurons
@@ -290,7 +301,7 @@ def main(unused_argv):
     # guarantees about what will happen just outside the boundary.
     # There might be some points there or there might not.
     bbox = bounding_box_pb2.BoundingBox()
-    with open(FLAGS.bbox) as bbox_f:
+    with open(FLAGS.bounding_box) as bbox_f:
         text_format.Parse(bbox_f.read(), bbox)
     bbox = bounding_box.BoundingBox(bbox)
 
@@ -309,10 +320,9 @@ def main(unused_argv):
     resegmentation_points = []
     for id_a, id_b, point in pair_detector.pairs_and_points():
         # TODO: um. does this want xyz or zyx order???
+        # `point` is an index into the array, aka zyx...
         p = vector_pb2.Vector3j()
-        p.x = point[0]
-        p.y = point[1]
-        p.z = point[2]
+        p.z, p.y, p.x = point
 
         # Build ResegmentationPoint proto
         rp = inference_pb2.ResegmentationPoint()
