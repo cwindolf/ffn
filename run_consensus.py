@@ -270,7 +270,7 @@ def _thread_main(subvolume__params):
     dset = params['dset']
 
     # Split consensus in subvoume
-    logging.info('Thread calling split consensus')
+    logging.info('Calling split consensus')
     slicer, result = split_merge_sv(
         subvolume, segmentation_dirs, min_ffn_size, min_split_size
     )
@@ -284,7 +284,7 @@ def _thread_main(subvolume__params):
         cur_seg_out = seg_outf[dset][slicer]
 
     # Merge subvol with its friend in the h5 array
-    logging.info('Thread merging with main')
+    logging.info('Merging with main')
     merge, sv_max_id, sv_old_max_id, new_mask = merge_into_main(
         cur_seg_out,
         result,
@@ -292,7 +292,7 @@ def _thread_main(subvolume__params):
         min_size=min_split_size,
     )
 
-    logging.info('Thread returning.')
+    logging.info('Returning.')
     return merge, sv_max_id, sv_old_max_id, new_mask, slicer
 
 
@@ -326,19 +326,22 @@ def main(_):
         svsize = outer_bbox.size
     else:
         svsize = [FLAGS.subvolume_size] * 3
-
-    # NB: Right now we're truncating the volume when
-    # subvols don't fit. See svcalc's kwargs to fix that up.
+    # Get subvolume maker
     svcalc = bounding_box.OrderlyOverlappingCalculator(
-        outer_bbox, svsize, [FLAGS.subvolume_overlap] * 3
+        outer_bbox,
+        svsize,
+        [FLAGS.subvolume_overlap] * 3,
+        include_small_sub_boxes=True,
     )
     nsb = svcalc.num_sub_boxes()
 
     # Get "tiers" of subvolumes
     # The idea is that within each tier, the subvolumes don't overlap.
-    # So, an entire tier can be run and merged into the main volume
-    # in parallel, and once a previous tier has been run, another can
-    # run in parallel to merge into those results.
+    # So, an entire tier can be run (in parallel) and merged into the
+    # main volume (in parallel), and once a previous tier has been
+    # merged, the next can be run (in parallel) to merge into the previous
+    # results.
+    # How do we choose the tiers?
     # It's a "Chessboard" idea. In 2D, a chessboard would require 4
     # tiers for overlapping tiles (as long as the overlap is less than
     # half the tile size.) (The black and white chessboard has
@@ -346,9 +349,9 @@ def main(_):
     # In 3D, we need 8 tiers: 0, x+, y+, z+, xy+, xz+, yz+, xyz+.
     # How can we get these from the subvolume calculator?
     # Honestly, it's easier to do a more brute force approach than to
-    # use the intuition from 3D chessboard that I just gave. But we'll
-    # make sure to check that we end up with 8 tiers, the result should
-    # be equivalent.
+    # derive some algorithm using intuition from 3D chessboard. But
+    # we'll make sure to check that we end up with 8 tiers, the result
+    # should be equivalent.
     allsvs = list(svcalc.generate_sub_boxes())
     tiers = []
     unused_indices = list(range(len(allsvs)))
@@ -382,7 +385,7 @@ def main(_):
 
     # This is the only writeable reference to our output file.
     # Only the main thread writes. Other threads will read.
-    # Need to set libver to use swmr
+    # h5 needs libver='latest' to use single writer/multiple reader.
     with h5py.File(outf, 'w', libver='latest') as seg_outf:
         # Note the fillvalue=0, so we can depend on the seg to
         # be initialized to background.
@@ -412,7 +415,7 @@ def main(_):
             # each tier is run independently of the others.
             n_done = 0
             for tier_num, tier in enumerate(tiers):
-                logging.info('Running tier', tier_num)
+                logging.info(f'Running tier {tier_num}')
                 for (
                     merge, sv_max_id, sv_old_max_id, new_mask, slicer
                 ) in pool.imap_unordered(
