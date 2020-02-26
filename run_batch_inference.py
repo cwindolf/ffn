@@ -5,12 +5,17 @@ Inference is performed with lots of threads.
 This script supports multiple inference requests at once, as long
 as they share a model (and they are forced to share a global bbox
 and subvolume structure). Each subvolume will have each inference
-request run on it in the order they were provided. Really the only
-thing allowed is different seed policies.
+request run on it in the order they were provided (in SERIAL!)
+(The use case is to do forward inference and then backwards inference,
+and of course the latter of those requires the results of the former,
+hence SERIAL!). Really the only thing allowed is different seed
+policies (IE PEAKS AND REVERSE!).
 
 These are supported by launching a runner per inference request,
 but making sure that the runners all share an executor and session
 and model etc.
+
+TODOOOO: SUPPORT RESEGMENTATION REQUEST!!!!!!!!!!!!!!!!!!!!!!!
 """
 import os
 import time
@@ -104,10 +109,11 @@ def infer():
     else:
         svsize = [FLAGS.subvolume_size] * 3
 
-    # NB: Right now we're truncating the volume when
-    # subvols don't fit. See svcalc's kwargs to fix that up.
     svcalc = bounding_box.OrderlyOverlappingCalculator(
-        outer_bbox, svsize, [FLAGS.subvolume_overlap] * 3
+        outer_bbox,
+        svsize,
+        [FLAGS.subvolume_overlap] * 3,
+        include_small_sub_boxes=True,
     )
     nsb = svcalc.num_sub_boxes()
     print('Total nsb', nsb)
