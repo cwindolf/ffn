@@ -185,11 +185,9 @@ class SpatialHashingPairDetector:
         # np.random.shuffle(subvolume_indices)
 
         # Pool helps compute EDTs quickly.
-        # with multiprocessing.pool.Pool(FLAGS.nworkers) as pool:
-        if True:
+        with multiprocessing.pool.Pool(FLAGS.nworkers) as pool:
             for segids_at_sv, pair2approach_at_sv in tqdm(
-                # pool.imap_unordered(
-                map(
+                pool.imap_unordered(
                     SpatialHashingPairDetector.process_subvolume,
                     zip(
                         subvolume_indices,
@@ -257,65 +255,38 @@ class SpatialHashingPairDetector:
             segid_edt = edts[j]
             for k in range(j + 1, len(segids_at_sv)):
                 other = segids_at_sv[k]
+                pair = int(segid), int(other)
                 # Find closest approach of other and segid
                 # in the subvolume. We define closest point
                 # the equidistant point with the smallest
                 # distance.
                 other_edt = edts[k]
 
-                # Mask out non-equidistant points
-                # sqrt(2)/2 considers points equidistant when the true
-                # equidistant point is halfway between them (even on
-                # the diagonal) so that we don't miss any equidistant
-                # points due to grid effects.
-                equis = np.where(
-                    # np.isclose(segid_edt, other_edt, atol=root2_on_2),
-                    np.abs(segid_edt - other_edt) <= 2.0 + 1e-5,
-                    segid_edt,
-                    np.inf,
+                # We take a Lagrangian approach to finding closest
+                # equidistant point
+                edt_diff = np.abs(segid_edt - other_edt)
+                L = (
+                    1e6 * edt_diff
+                    + segid_edt
+                    + other_edt
                 )
-                approach_dist = equis.min()
+                approach_offset = np.unravel_index(np.argmin(L), L.shape)
+                approach_dist = segid_edt[approach_offset]
 
-                # There should always be equidistant points, assuming
-                #  that sqrt(2)/2 was the right choice of atol.
-                if not (approach_dist < np.inf):
-                    logging.critical("Didn't find equidistant points.")
-                    continue
+                # Check close enough
+                if np.sqrt(approach_dist) < FLAGS.max_distance:
+                    if abs(edt_diff[approach_offset]) > 2.0:
+                        logging.critical("Bad equidistance violation...")
+                        logging.critical(
+                            f"Pair was {pair} with dists "
+                            f"{approach_dist}, {other_edt[approach_offset]}"
+                        )
 
-                # Are we close enough?
-                if approach_dist > FLAGS.max_distance:
-                    continue
+                    # Convert local offset to global point
+                    approach_point = subvolume.start + approach_offset
 
-                # Int JIC numpy is being weird
-                pair = int(segid), int(other)
-
-                # Location of minimum
-                min_equis = equis == approach_dist
-
-                # Approach 1
-                # Offset is most central of these points.
-                # XXX: This is kinda random. What else though?
-                # ccs, nccs = ndimage.label(min_equis)
-                # if nccs == 0:
-                #     logging.critical(f"No CCs found for {pair}.")
-                #     continue
-                # equis_edt = edt.edt3dsq(ccs)
-                # approach_offset = np.argmax(equis_edt)
-
-                # Approach 2
-                # Offset is just a random choice.
-                # I mean you can try to be smarter about it. But there
-                # are so many possibilities... And centrality isn't
-                # necessarily desirable...
-                ii, jj, kk = np.nonzero(min_equis)
-                ix = np.random.randint(len(ii))
-                approach_offset = np.array([ii[ix], jj[ix], kk[ix]])
-
-                # Convert local offset to global point
-                approach_point = subvolume.start + approach_offset
-
-                # OK, store this approach
-                pair2approach_at_sv[pair] = approach_point, approach_dist
+                    # OK, store this approach
+                    pair2approach_at_sv[pair] = approach_point, approach_dist
 
         return segids_at_sv, pair2approach_at_sv
 
