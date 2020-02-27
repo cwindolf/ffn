@@ -42,7 +42,7 @@ passes to its `canvas.segment_at(...)`.
 """
 import json
 import numpy as np
-from tqdm import trange
+from tqdm import tqdm
 from scipy import ndimage
 from itertools import repeat
 import logging
@@ -54,11 +54,13 @@ from absl import flags
 import multiprocessing.pool
 
 import ppx.data_util as dx
+import edt
 
 from ffn.utils import bounding_box_pb2
 from ffn.utils import bounding_box
 from ffn.utils import vector_pb2
 from ffn.inference import inference_pb2
+
 
 
 flags.DEFINE_string(
@@ -130,15 +132,6 @@ flags.DEFINE_integer("nworkers", 8, "")
 FLAGS = flags.FLAGS
 
 
-def _edt_helper(segmentation__segid):
-    # XXX: need to set `sampling` to support anisotropic.
-    segmentation, segid = segmentation__segid
-    return ndimage.distance_transform_edt(segmentation == segid)
-
-
-root2_on_2 = 0.5 * np.sqrt(2.0)
-
-
 class SpatialHashingPairDetector:
     """Spatial hashing for segmentation overlap + closest approach
 
@@ -158,7 +151,7 @@ class SpatialHashingPairDetector:
 
     def __init__(
         self,
-        init_segmentation,
+        init_segmentation_spec,
         bbox,
         bucket_size=64,
     ):
@@ -183,95 +176,42 @@ class SpatialHashingPairDetector:
         # approach_dist is the distance of this approach point to the
         # two segments in the pair (they will be equidistant from the
         # point).
+        # Note that the distances are really squared distances...
         pair2approach = {}
 
-        # Pool helps compute EDTs quickly.
-        with multiprocessing.pool.Pool(FLAGS.nworkers) as pool:
-            # Loop to build pair2approach
-            # TODO: really, this loop should be parallelized, not
-            #       these weird inner loops. We'll see what the
-            #       runtime looks like and decide.
-            for svid in trange(svcalc.num_sub_boxes()):
-                # Get all segids for this subvolume index
-                subvolume = svcalc.index_to_sub_box(svid)
-                seg_at_sv = init_segmentation[subvolume.to_slice()]
-                segids_at_sv = np.unique(seg_at_sv)
+        # Iterate in a random order to get better indication of progress
+        subvolume_indices = np.arange(svcalc.num_sub_boxes())
+        # np.random.seed(808)
+        # np.random.shuffle(subvolume_indices)
 
-                # Update our segid set
+        # Pool helps compute EDTs quickly.
+        # with multiprocessing.pool.Pool(FLAGS.nworkers) as pool:
+        if True:
+            for segids_at_sv, pair2approach_at_sv in tqdm(
+                # pool.imap_unordered(
+                map(
+                    SpatialHashingPairDetector.process_subvolume,
+                    zip(
+                        subvolume_indices,
+                        repeat(svcalc),
+                        repeat(init_segmentation_spec),
+                    ),
+                ),
+                total=subvolume_indices.size,
+                smoothing=0.0,
+                mininterval=1.0,
+                ncols=80,
+            ):
+                # Update segid set with segids in this subvolume
                 segids.update(segids_at_sv)
 
-                # Compute EDTs to help later compute the approach
-                # points
-                edts = pool.map(
-                    _edt_helper,
-                    zip(repeat(seg_at_sv), segids_at_sv),
-                )
-
-                # Update pair approach tracker
-                # TODO: could run this loop in the pool most likely.
-                for j, segid in enumerate(segids_at_sv):
-                    segid_edt = edts[j]
-                    for k in range(j + 1, len(segids_at_sv)):
-                        other = segids_at_sv[k]
-                        # Find closest approach of other and segid
-                        # in the subvolume. We define closest point
-                        # the equidistant point with the smallest
-                        # distance.
-                        other_edt = edts[k]
-
-                        # Mask out non-equidistant points
-                        # sqrt(2)/2 considers points equidistant when the true
-                        # equidistant point is halfway between them (even on
-                        # the diagonal) so that we don't miss any equidistant
-                        # points due to grid effects.
-                        equis = np.where(
-                            np.isclose(segid_edt, other_edt, atol=root2_on_2),
-                            segid_edt,
-                            np.inf,
-                        )
-                        approach_dist = equis.min()
-
-                        # Are we close enough?
-                        if approach_dist > FLAGS.max_distance:
+                # Incorporate new closest approaches
+                for pair, (point, dist) in pair2approach_at_sv.items():
+                    if pair in pair2approach:
+                        _, prev_dist = pair2approach[pair]
+                        if dist > prev_dist:
                             continue
-
-                        # Are we closer than we were before?
-                        # Int JIC numpy is being weird
-                        pair = int(segid), int(other)
-                        if pair in pair2approach:
-                            _, old_approach_dist = pair2approach[pair]
-                            if approach_dist > old_approach_dist:
-                                continue
-
-                        # Location of minimum
-                        # We pick a nice point in the largest CC of
-                        # of closest equidistant points
-                        min_equis = equis == approach_dist
-                        if min_equis.sum() == 1:
-                            approach_offset = np.nonzero(min_equis)
-                        else:
-                            # Find largest cc
-                            ccs, nccs = ndimage.label(min_equis)
-                            largest_cc = None
-                            size = 0
-                            for label in range(nccs):
-                                this_cc = ccs == label
-                                label_size = (this_cc).sum()
-                                if label_size > size:
-                                    largest_cc = this_cc
-                                    size = label_size
-                            del ccs
-
-                            # Get approach offset
-                            while (largest_cc > 0).any():
-                                approach_offset = np.nonzero(largest_cc)[0][0]
-                                largest_cc = ndimage.binary_erosion(largest_cc)
-
-                        # Convert local offset to global point
-                        approach_point = subvolume.start + approach_offset
-
-                        # OK, store this approach
-                        pair2approach[pair] = approach_point, approach_dist
+                    pair2approach[pair] = point, dist
 
         logging.info(
             f"Spatial hash finished. Found {len(pair2approach)} pairs "
@@ -286,6 +226,98 @@ class SpatialHashingPairDetector:
     def pairs_and_points(self):
         for (id_a, id_b), (point, dist) in self.pair2approach.items():
             yield id_a, id_b, point
+
+    @staticmethod
+    def process_subvolume(subvolume_index__svcalc__init_segmentation_spec):
+        """Determines the approach points within a subvolume.
+
+        Helper to add parallelism during __init__ since otherwise this
+        would take like a day to run.
+        """
+        svid, svcalc, init_segmentation_spec = subvolume_index__svcalc__init_segmentation_spec # noqa
+
+        # Get all segids for this subvolume index
+        subvolume = svcalc.index_to_sub_box(svid)
+        init_segmentation = dx.loadspec(
+            init_segmentation_spec, readonly_mmap=True
+        )
+        seg_at_sv = init_segmentation[subvolume.to_slice()]
+        segids_at_sv = np.setdiff1d(np.unique(seg_at_sv), [0])
+
+        # Compute EDTs to help later compute the approach
+        # points
+        edts = [
+            edt.edt3dsq(seg_at_sv != segid)
+            for segid in segids_at_sv
+        ]
+
+        # Get pair approaches for this subvolume
+        pair2approach_at_sv = {}
+        for j, segid in enumerate(segids_at_sv):
+            segid_edt = edts[j]
+            for k in range(j + 1, len(segids_at_sv)):
+                other = segids_at_sv[k]
+                # Find closest approach of other and segid
+                # in the subvolume. We define closest point
+                # the equidistant point with the smallest
+                # distance.
+                other_edt = edts[k]
+
+                # Mask out non-equidistant points
+                # sqrt(2)/2 considers points equidistant when the true
+                # equidistant point is halfway between them (even on
+                # the diagonal) so that we don't miss any equidistant
+                # points due to grid effects.
+                equis = np.where(
+                    # np.isclose(segid_edt, other_edt, atol=root2_on_2),
+                    np.abs(segid_edt - other_edt) <= 2.0 + 1e-5,
+                    segid_edt,
+                    np.inf,
+                )
+                approach_dist = equis.min()
+
+                # There should always be equidistant points, assuming
+                #  that sqrt(2)/2 was the right choice of atol.
+                if not (approach_dist < np.inf):
+                    logging.critical("Didn't find equidistant points.")
+                    continue
+
+                # Are we close enough?
+                if approach_dist > FLAGS.max_distance:
+                    continue
+
+                # Int JIC numpy is being weird
+                pair = int(segid), int(other)
+
+                # Location of minimum
+                min_equis = equis == approach_dist
+
+                # Approach 1
+                # Offset is most central of these points.
+                # XXX: This is kinda random. What else though?
+                # ccs, nccs = ndimage.label(min_equis)
+                # if nccs == 0:
+                #     logging.critical(f"No CCs found for {pair}.")
+                #     continue
+                # equis_edt = edt.edt3dsq(ccs)
+                # approach_offset = np.argmax(equis_edt)
+
+                # Approach 2
+                # Offset is just a random choice.
+                # I mean you can try to be smarter about it. But there
+                # are so many possibilities... And centrality isn't
+                # necessarily desirable...
+                ii, jj, kk = np.nonzero(min_equis)
+                ix = np.random.randint(len(ii))
+                approach_offset = np.array([ii[ix], jj[ix], kk[ix]])
+
+                # Convert local offset to global point
+                approach_point = subvolume.start + approach_offset
+
+                # OK, store this approach
+                pair2approach_at_sv[pair] = approach_point, approach_dist
+
+        return segids_at_sv, pair2approach_at_sv
 
 
 def main(unused_argv):
@@ -305,16 +337,9 @@ def main(unused_argv):
         text_format.Parse(bbox_f.read(), bbox)
     bbox = bounding_box.BoundingBox(bbox)
 
-    # Load up segmentation
-    # Load as memmap because we should only ever load
-    # small portions into memory at once.
-    init_segmentation = dx.loadspec(
-        FLAGS.init_segmentation, readonly_mmap=True
-    )
-
     # Build a data structure that will help us quickly check
     # whether two segments cannot possibly overlap.
-    pair_detector = SpatialHashingPairDetector(init_segmentation, bbox)
+    pair_detector = SpatialHashingPairDetector(FLAGS.init_segmentation, bbox)
 
     # Get the resegmentation points
     resegmentation_points = []
