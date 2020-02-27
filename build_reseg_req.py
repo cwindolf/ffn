@@ -43,9 +43,8 @@ passes to its `canvas.segment_at(...)`.
 import json
 import numpy as np
 from tqdm import tqdm
-from scipy import ndimage
-from itertools import repeat
 import logging
+
 logging.basicConfig(level=logging.INFO)
 
 from google.protobuf import text_format
@@ -54,13 +53,14 @@ from absl import flags
 import multiprocessing.pool
 
 import ppx.data_util as dx
+
+# Faster than skfmm and scipy.
 import edt
 
 from ffn.utils import bounding_box_pb2
 from ffn.utils import bounding_box
 from ffn.utils import vector_pb2
 from ffn.inference import inference_pb2
-
 
 
 flags.DEFINE_string(
@@ -89,7 +89,7 @@ flags.DEFINE_string(
     "HDF5 datspec pointing to the initial segmentation of this "
     "volume. Will be written to the InferenceRequest stored in the "
     "output ResegmentationRequest proto, and will also be used to "
-    "figure out the `ResegmentationPoint`s."
+    "figure out the `ResegmentationPoint`s.",
 )
 
 flags.DEFINE_integer(
@@ -99,20 +99,10 @@ flags.DEFINE_integer(
     "resegmentation",
 )
 flags.DEFINE_string(
-    "output_directory",
-    None,
-    "The output directory for resegmentation.",
+    "output_directory", None, "The output directory for resegmentation."
 )
-flags.DEFINE_integer(
-    "subdir_digits",
-    0,
-    "See ResegmentationRequest proto.",
-)
-flags.DEFINE_integer(
-    "max_retry_iters",
-    1,
-    "See ResegmentationRequest proto.",
-)
+flags.DEFINE_integer("subdir_digits", 0, "See ResegmentationRequest proto.")
+flags.DEFINE_integer("max_retry_iters", 1, "See ResegmentationRequest proto.")
 flags.DEFINE_float(
     "segment_recovery_fraction",
     None,
@@ -123,11 +113,18 @@ flags.DEFINE_integer(
     "max_distance",
     4,
     "Segments that are farther apart than this number will be excluded"
-    "from consideration as possible merge candidates."
+    "from consideration as possible merge candidates.",
 )
 
 flags.DEFINE_integer(
     "nworkers", None, "Number of processes. All cores by default."
+)
+flags.DEFINE_boolean(
+    "bigmem",
+    False,
+    "Load the segmentation into memory. Fine for small segmentations, "
+    "but for those it shouldn't even matter. For big segs, make sure "
+    "you have a lot of memory.",
 )
 
 
@@ -154,12 +151,7 @@ class PairDetector:
     BUCKET_SIZE = 64
     MAX_SQ_DIST = 3 * 64 ** 2
 
-    def __init__(
-        self,
-        init_segmentation_spec,
-        bbox,
-    ):
-        logging.info("Detecting pairs.")
+    def __init__(self, init_segmentation_spec, bbox):
 
         # Get the subvolumes
         overlap = [2 * FLAGS.max_distance] * 3
@@ -183,23 +175,34 @@ class PairDetector:
         # Note that the distances are really squared distances...
         pair2approach = {}
 
+        if FLAGS.bigmem:
+            # Load the whole segmentation into memory, so that worker
+            # processes inherit the memory. If not set, worker processes
+            # just make their own HDF5 handle, and they don't load the
+            # thing into memory at all.
+            logging.info("Loading segmentation into memory, since you asked.")
+            global init_segmentation
+            init_segmentation = dx.loadspec(init_segmentation_spec)
+
         # Pool maps over subvolumes, main thread loop reduces
         # results into `segids` and `pair2approach`.
+        logging.info("Detecting pairs.")
         with multiprocessing.pool.Pool(
             FLAGS.nworkers,
             initializer=PairDetector.proc_initializer,
             initargs=(init_segmentation_spec, svcalc),
-        ) as pool:
-            for segids_at_sv, pair2approach_at_sv in tqdm(
+        ) as pool, tqdm(
+            total=svcalc.num_sub_boxes(),
+            smoothing=0.0,
+            mininterval=1.0,
+            ncols=100,
+        ) as t:
+            t.set_description(f"0 / 0")
+            for niter, (segids_at_sv, pair2approach_at_sv) in enumerate(
                 pool.imap_unordered(
                     PairDetector.process_subvolume,
                     range(svcalc.num_sub_boxes()),
-                    chunksize=8,
-                ),
-                total=svcalc.num_sub_boxes(),
-                smoothing=0.0,
-                mininterval=1.0,
-                ncols=80,
+                )
             ):
                 # Update segid set with segids in this subvolume
                 segids.update(segids_at_sv)
@@ -211,6 +214,13 @@ class PairDetector:
                         if dist > prev_dist:
                             continue
                     pair2approach[pair] = point, dist
+
+                # Update progress
+                t.update()
+                if not niter % 100:
+                    t.set_description(
+                        f"{len(pair2approach)} / {len(segids)}^2"
+                    )
 
         logging.info(
             f"Spatial hash finished. Found {len(pair2approach)} pairs "
@@ -229,10 +239,14 @@ class PairDetector:
 
     @staticmethod
     def proc_initializer(init_segmentation_spec, svcalc):
-        """Let processes retain their HDF5 handles."""
-        PairDetector.process_subvolume.init_segmentation = dx.loadspec(
-            init_segmentation_spec, readonly_mmap=True
-        )
+        """Manage variables that don't change across subvolumes."""
+        if FLAGS.bigmem:
+            global init_segmentation
+        else:
+            init_segmentation = dx.loadspec(
+                init_segmentation_spec, readonly_mmap=True
+            )
+        PairDetector.process_subvolume.init_segmentation = init_segmentation
         PairDetector.process_subvolume.svcalc = svcalc
 
     @staticmethod
@@ -251,10 +265,7 @@ class PairDetector:
 
         # Compute EDTs to help later compute the approach
         # points
-        edts = [
-            edt.edt3dsq(seg_at_sv != segid).astype(np.float64)
-            for segid in segids_at_sv
-        ]
+        edts = [edt.edt3d(seg_at_sv != segid) for segid in segids_at_sv]
 
         # Get pair approaches for this subvolume
         pair2approach_at_sv = {}
@@ -271,22 +282,18 @@ class PairDetector:
 
                 # We take a Lagrangian approach to finding closest
                 # equidistant point
-                edt_diff = np.abs(segid_edt - other_edt)
-                L = (
-                    (2.0 * PairDetector.MAX_SQ_DIST) * edt_diff
-                    + segid_edt
-                    + other_edt
-                )
+                L = np.abs(segid_edt - other_edt).astype(np.float64)
+                L *= 2.0 * PairDetector.MAX_SQ_DIST
+                L += segid_edt
+                L += other_edt
+
                 approach_offset = np.unravel_index(np.argmin(L), L.shape)
                 approach_dist = segid_edt[approach_offset]
                 approach_dist_ = other_edt[approach_offset]
 
                 # Check close enough
-                sum_dist = np.sqrt(approach_dist) + np.sqrt(approach_dist_)
-                if sum_dist < FLAGS.max_distance:
-                    # 3 is sqrt(3) squared, the max distance between arguably
-                    # neighboring voxels.
-                    if abs(edt_diff[approach_offset]) > 3.0:
+                if approach_dist + approach_dist_ < FLAGS.max_distance:
+                    if abs(approach_dist - approach_dist_) > np.sqrt(3.0):
                         logging.critical("Bad equidistance violation...")
                         logging.critical(
                             f"Pair was {pair} with dists "
@@ -350,7 +357,9 @@ def main(unused_argv):
     resegmentation_request.output_directory = FLAGS.output_directory
     resegmentation_request.subdir_digits = FLAGS.subdir_digits
     resegmentation_request.max_retry_iters = FLAGS.max_retry_iters
-    resegmentation_request.segment_recovery_fraction = FLAGS.segment_recovery_fraction  # noqa
+    resegmentation_request.segment_recovery_fraction = (
+        FLAGS.segment_recovery_fraction
+    )
 
     # Add init_segmentation field to infreq and save into RR
     inference_request.init_segmentation = FLAGS.init_segmentation
@@ -370,7 +379,7 @@ def main(unused_argv):
     # compute analysis radius by subtracting FFN's FOV radius from
     # the resegmentation radius.
     model_args = json.loads(inference_request.model_args)
-    ffn_fov_radius = model_args.get('fov_size', [24, 24, 24])
+    ffn_fov_radius = model_args.get("fov_size", [24, 24, 24])
     analysis_radius = vector_pb2.Vector3j()
     analysis_radius.x = FLAGS.radius - ffn_fov_radius[0]
     analysis_radius.y = FLAGS.radius - ffn_fov_radius[1]
@@ -378,7 +387,7 @@ def main(unused_argv):
     resegmentation_request.analysis_radius = analysis_radius
 
     # Write request to output file
-    with open(FLAGS.output_file, 'w') as out:
+    with open(FLAGS.output_file, "w") as out:
         out.write(text_format.MessageToString(resegmentation_request))
 
     logging.info(f"OK, I wrote {FLAGS.output_file}. Bye...")
