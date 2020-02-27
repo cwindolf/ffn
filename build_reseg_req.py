@@ -126,13 +126,15 @@ flags.DEFINE_integer(
     "from consideration as possible merge candidates."
 )
 
-flags.DEFINE_integer("nworkers", 8, "")
+flags.DEFINE_integer(
+    "nworkers", None, "Number of processes. All cores by default."
+)
 
 
 FLAGS = flags.FLAGS
 
 
-class SpatialHashingPairDetector:
+class PairDetector:
     """Spatial hashing for segmentation overlap + closest approach
 
     At some point, we'll have to loop over all pairs. We don't want to
@@ -149,11 +151,13 @@ class SpatialHashingPairDetector:
     get close enough (according to FLAGS.max_distance)
     """
 
+    BUCKET_SIZE = 64
+    MAX_SQ_DIST = 3 * 64 ** 2
+
     def __init__(
         self,
         init_segmentation_spec,
         bbox,
-        bucket_size=64,
     ):
         logging.info("Detecting pairs.")
 
@@ -161,7 +165,7 @@ class SpatialHashingPairDetector:
         overlap = [2 * FLAGS.max_distance] * 3
         svcalc = bounding_box.OrderlyOverlappingCalculator(
             bbox,
-            [bucket_size, bucket_size, bucket_size],
+            [PairDetector.BUCKET_SIZE] * 3,
             overlap,
             include_small_sub_boxes=True,
         )
@@ -179,23 +183,20 @@ class SpatialHashingPairDetector:
         # Note that the distances are really squared distances...
         pair2approach = {}
 
-        # Iterate in a random order to get better indication of progress
-        subvolume_indices = np.arange(svcalc.num_sub_boxes())
-        # np.random.seed(808)
-        # np.random.shuffle(subvolume_indices)
-
-        # Pool helps compute EDTs quickly.
-        with multiprocessing.pool.Pool(FLAGS.nworkers) as pool:
+        # Pool maps over subvolumes, main thread loop reduces
+        # results into `segids` and `pair2approach`.
+        with multiprocessing.pool.Pool(
+            FLAGS.nworkers,
+            initializer=PairDetector.proc_initializer,
+            initargs=(init_segmentation_spec, svcalc),
+        ) as pool:
             for segids_at_sv, pair2approach_at_sv in tqdm(
                 pool.imap_unordered(
-                    SpatialHashingPairDetector.process_subvolume,
-                    zip(
-                        subvolume_indices,
-                        repeat(svcalc),
-                        repeat(init_segmentation_spec),
-                    ),
+                    PairDetector.process_subvolume,
+                    range(svcalc.num_sub_boxes()),
+                    chunksize=8,
                 ),
-                total=subvolume_indices.size,
+                total=svcalc.num_sub_boxes(),
                 smoothing=0.0,
                 mininterval=1.0,
                 ncols=80,
@@ -222,30 +223,36 @@ class SpatialHashingPairDetector:
         self.segids = segids
 
     def pairs_and_points(self):
+        """This is basically the reason this class exists."""
         for (id_a, id_b), (point, dist) in self.pair2approach.items():
             yield id_a, id_b, point
 
     @staticmethod
-    def process_subvolume(subvolume_index__svcalc__init_segmentation_spec):
+    def proc_initializer(init_segmentation_spec, svcalc):
+        """Let processes retain their HDF5 handles."""
+        PairDetector.process_subvolume.init_segmentation = dx.loadspec(
+            init_segmentation_spec, readonly_mmap=True
+        )
+        PairDetector.process_subvolume.svcalc = svcalc
+
+    @staticmethod
+    def process_subvolume(svid):
         """Determines the approach points within a subvolume.
 
         Helper to add parallelism during __init__ since otherwise this
         would take like a day to run.
         """
-        svid, svcalc, init_segmentation_spec = subvolume_index__svcalc__init_segmentation_spec # noqa
-
         # Get all segids for this subvolume index
+        svcalc = PairDetector.process_subvolume.svcalc
         subvolume = svcalc.index_to_sub_box(svid)
-        init_segmentation = dx.loadspec(
-            init_segmentation_spec, readonly_mmap=True
-        )
+        init_segmentation = PairDetector.process_subvolume.init_segmentation
         seg_at_sv = init_segmentation[subvolume.to_slice()]
         segids_at_sv = np.setdiff1d(np.unique(seg_at_sv), [0])
 
         # Compute EDTs to help later compute the approach
         # points
         edts = [
-            edt.edt3dsq(seg_at_sv != segid)
+            edt.edt3dsq(seg_at_sv != segid).astype(np.float64)
             for segid in segids_at_sv
         ]
 
@@ -266,16 +273,20 @@ class SpatialHashingPairDetector:
                 # equidistant point
                 edt_diff = np.abs(segid_edt - other_edt)
                 L = (
-                    1e6 * edt_diff
+                    (2.0 * PairDetector.MAX_SQ_DIST) * edt_diff
                     + segid_edt
                     + other_edt
                 )
                 approach_offset = np.unravel_index(np.argmin(L), L.shape)
                 approach_dist = segid_edt[approach_offset]
+                approach_dist_ = other_edt[approach_offset]
 
                 # Check close enough
-                if np.sqrt(approach_dist) < FLAGS.max_distance:
-                    if abs(edt_diff[approach_offset]) > 2.0:
+                sum_dist = np.sqrt(approach_dist) + np.sqrt(approach_dist_)
+                if sum_dist < FLAGS.max_distance:
+                    # 3 is sqrt(3) squared, the max distance between arguably
+                    # neighboring voxels.
+                    if abs(edt_diff[approach_offset]) > 3.0:
                         logging.critical("Bad equidistance violation...")
                         logging.critical(
                             f"Pair was {pair} with dists "
@@ -289,6 +300,9 @@ class SpatialHashingPairDetector:
                     pair2approach_at_sv[pair] = approach_point, approach_dist
 
         return segids_at_sv, pair2approach_at_sv
+
+
+# ------------------------------- main --------------------------------
 
 
 def main(unused_argv):
@@ -310,7 +324,7 @@ def main(unused_argv):
 
     # Build a data structure that will help us quickly check
     # whether two segments cannot possibly overlap.
-    pair_detector = SpatialHashingPairDetector(FLAGS.init_segmentation, bbox)
+    pair_detector = PairDetector(FLAGS.init_segmentation, bbox)
 
     # Get the resegmentation points
     resegmentation_points = []
