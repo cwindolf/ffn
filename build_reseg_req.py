@@ -109,9 +109,9 @@ flags.DEFINE_float(
     "Important one. See ResegmentationRequest proto.",
 )
 
-flags.DEFINE_integer(
+flags.DEFINE_float(
     "max_distance",
-    4,
+    2.0,
     "Segments that are farther apart than this number will be excluded"
     "from consideration as possible merge candidates.",
 )
@@ -149,12 +149,12 @@ class PairDetector:
     """
 
     BUCKET_SIZE = 64
-    MAX_SQ_DIST = 3 * 64 ** 2
+    MAX_DIST = np.sqrt(3 * 64 ** 2)
 
     def __init__(self, init_segmentation_spec, bbox):
 
         # Get the subvolumes
-        overlap = [2 * FLAGS.max_distance] * 3
+        overlap = [int(np.ceil(2 * FLAGS.max_distance))] * 3
         svcalc = bounding_box.OrderlyOverlappingCalculator(
             bbox,
             [PairDetector.BUCKET_SIZE] * 3,
@@ -283,7 +283,7 @@ class PairDetector:
                 # We take a Lagrangian approach to finding closest
                 # equidistant point
                 L = np.abs(segid_edt - other_edt).astype(np.float64)
-                L *= 2.0 * PairDetector.MAX_SQ_DIST
+                L *= 2.0 * PairDetector.MAX_DIST
                 L += segid_edt
                 L += other_edt
 
