@@ -241,7 +241,7 @@ def containing(*boxes):
     The minimum bounding box that contains all boxes.
 
   Raises:
-    ValueError: if invalid arguments are 217specified.
+    ValueError: if invalid arguments are specified.
   """
   if not boxes:
     raise ValueError('At least one bounding box must be specified')
