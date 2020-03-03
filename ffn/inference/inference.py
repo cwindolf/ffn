@@ -445,7 +445,7 @@ class Canvas(object):
 
       start += self._pred_delta
       end = start + self._pred_size
-      sel = [slice(s, e) for s, e in zip(start, end)]
+      sel = tuple(slice(s, e) for s, e in zip(start, end))
 
       # Bias towards oversegmentation by making it impossible to reverse
       # disconnectedness predictions in the course of inference.
@@ -620,9 +620,9 @@ class Canvas(object):
         # covering the area that was actually changed by the FFN. In case the
         # segment is going to be rejected due to small size, this can
         # significantly reduce processing time.
-        sel = [slice(max(s, 0), e + 1) for s, e in zip(
+        sel = tuple(slice(max(s, 0), e + 1) for s, e in zip(
             self._min_pos - self._pred_size // 2,
-            self._max_pos + self._pred_size // 2)]
+            self._max_pos + self._pred_size // 2))
 
         # We only allow creation of new segments in areas that are currently
         # empty.
