@@ -14,8 +14,6 @@ policies (IE PEAKS AND REVERSE!).
 These are supported by launching a runner per inference request,
 but making sure that the runners all share an executor and session
 and model etc.
-
-TODOOOO: SUPPORT RESEGMENTATION REQUEST!!!!!!!!!!!!!!!!!!!!!!!
 """
 import os
 import time
@@ -109,16 +107,19 @@ def infer():
     else:
         svsize = [FLAGS.subvolume_size] * 3
 
+    print('Using subvolume size', svsize)
+    print('Using overlap', [FLAGS.subvolume_overlap] * 3)
     svcalc = bounding_box.OrderlyOverlappingCalculator(
         outer_bbox,
         svsize,
         [FLAGS.subvolume_overlap] * 3,
-        include_small_sub_boxes=True,
     )
     nsb = svcalc.num_sub_boxes()
-    print('Total nsb', nsb)
-    print(svcalc.total_sub_boxes_xyz)
-    subvols = svcalc.generate_sub_boxes()
+    print(svcalc)
+    print('Total nsb:', nsb, 'Along axes:', svcalc.total_sub_boxes_xyz)
+    subvols = list(svcalc.generate_sub_boxes())
+    print('The boxes:\n\t', '\n\t'.join(str(s) for s in subvols))
+    print('The slices:\n\t', '\n\t'.join(str(s.to_slice()) for s in subvols))
 
     # If we are one of many workers, take the ith subvol
     # only when (i mod nworkers) == rank
