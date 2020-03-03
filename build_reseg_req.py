@@ -59,7 +59,6 @@ import edt
 
 from ffn.utils import bounding_box_pb2
 from ffn.utils import bounding_box
-from ffn.utils import vector_pb2
 from ffn.inference import inference_pb2
 
 
@@ -152,8 +151,12 @@ class PairDetector:
     MAX_DIST = np.sqrt(3 * 64 ** 2)
 
     def __init__(self, init_segmentation_spec, bbox):
+        """Constructor finds the requested pairs.
 
-        # Get the subvolumes
+        Warning, it looks at the FLAGS.
+        """
+        # Chunk into subvolumes
+        # (these will be buckets in the spatial hash)
         overlap = [int(np.ceil(2 * FLAGS.max_distance))] * 3
         svcalc = bounding_box.OrderlyOverlappingCalculator(
             bbox,
@@ -162,9 +165,6 @@ class PairDetector:
             include_small_sub_boxes=True,
         )
 
-        # Find all the segids
-        segids = set()
-
         # Store all of the (sorted) pairs that have been
         # seen together as keys in a dictionary. The values in this
         # dict will describe the closest approach between these two
@@ -172,11 +172,13 @@ class PairDetector:
         # approach_dist is the distance of this approach point to the
         # two segments in the pair (they will be equidistant from the
         # point).
-        # Note that the distances are really squared distances...
         pair2approach = {}
 
+        # Might as well store the set of segids, while we're at it.
+        segids = set()
+
         if FLAGS.bigmem:
-            # Load the whole segmentation into memory, so that worker
+            # Load the whole segmentation into a global, so that worker
             # processes inherit the memory. If not set, worker processes
             # just make their own HDF5 handle, and they don't load the
             # thing into memory at all.
@@ -222,9 +224,13 @@ class PairDetector:
                         f"{len(pair2approach)} / {len(segids)}^2"
                     )
 
+        n_pairs = len(pair2approach)
+        n_possible = len(segids) * (len(segids) - 1) / 2
         logging.info(
-            f"Spatial hash finished. Found {len(pair2approach)} pairs "
-            f"out of {len(segids) ** 2} possible pairs."
+            f"Spatial hash finished. Found {n_pairs} pairs between "
+            f"the {len(segids)} bodies, out of {n_possible} possible "
+            f"pairs. That's a rate of {n_pairs / len(segids)} "
+            "partners per body."
         )
 
         # Store things for my friends
@@ -274,20 +280,29 @@ class PairDetector:
             for k in range(j + 1, len(segids_at_sv)):
                 other = segids_at_sv[k]
                 pair = int(segid), int(other)
-                # Find closest approach of other and segid
-                # in the subvolume. We define closest point
-                # the equidistant point with the smallest
-                # distance.
+                # Find closest approach of other and segid in the
+                # subvolume. We define the closest approach to be
+                # the point whose sum distance to both bodies is
+                # smallest out of all the equidistant points.
                 other_edt = edts[k]
 
-                # We take a Lagrangian approach to finding closest
-                # equidistant point
-                L = np.abs(segid_edt - other_edt).astype(np.float64)
-                L *= 2.0 * PairDetector.MAX_DIST
-                L += segid_edt
-                L += other_edt
+                # Constrained minimum
+                # We consider a voxel to be more or less equidistant
+                # from the two bodies when the difference between its
+                # distances from the two bodies less than root 3,
+                # since that's the max distance between neighboring
+                # voxels in 3D. If we had no tolerance here, we would
+                # lose a lot of candidates due to grid effects.
+                equis = np.where(
+                    np.abs(segid_edt - other_edt) < np.sqrt(3.0) + 1e-5,
+                    segid_edt + other_edt,
+                    np.inf,
+                )
 
-                approach_offset = np.unravel_index(np.argmin(L), L.shape)
+                approach_offset = np.unravel_index(
+                    np.argmin(equis),
+                    equis.shape
+                )
                 approach_dist = segid_edt[approach_offset]
                 approach_dist_ = other_edt[approach_offset]
 
@@ -336,16 +351,13 @@ def main(unused_argv):
     # Get the resegmentation points
     resegmentation_points = []
     for id_a, id_b, point in pair_detector.pairs_and_points():
-        # TODO: um. does this want xyz or zyx order???
-        # `point` is an index into the array, aka zyx...
-        p = vector_pb2.Vector3j()
-        p.z, p.y, p.x = point
-
         # Build ResegmentationPoint proto
         rp = inference_pb2.ResegmentationPoint()
         rp.id_a = id_a
         rp.id_b = id_b
-        rp.point = p
+        # TODO: um. does this want xyz or zyx order???
+        # `point` is an index into the array, aka zyx...
+        rp.point.z, rp.point.y, rp.point.x = point
 
         # OK bai
         resegmentation_points.append(rp)
@@ -369,22 +381,18 @@ def main(unused_argv):
     resegmentation_request.points = resegmentation_points
 
     # Resegmentation and analysis radius
-    radius = vector_pb2.Vector3j()
-    radius.x = FLAGS.radius
-    radius.y = FLAGS.radius
-    radius.z = FLAGS.radius
-    resegmentation_request.radius = radius
+    resegmentation_request.radius.x = FLAGS.radius
+    resegmentation_request.radius.y = FLAGS.radius
+    resegmentation_request.radius.z = FLAGS.radius
 
     # Following suggestion in a comment in ResegmentationRequest proto,
     # compute analysis radius by subtracting FFN's FOV radius from
     # the resegmentation radius.
     model_args = json.loads(inference_request.model_args)
     ffn_fov_radius = model_args.get("fov_size", [24, 24, 24])
-    analysis_radius = vector_pb2.Vector3j()
-    analysis_radius.x = FLAGS.radius - ffn_fov_radius[0]
-    analysis_radius.y = FLAGS.radius - ffn_fov_radius[1]
-    analysis_radius.z = FLAGS.radius - ffn_fov_radius[2]
-    resegmentation_request.analysis_radius = analysis_radius
+    resegmentation_request.analysis_radius.x = FLAGS.radius - ffn_fov_radius[0]
+    resegmentation_request.analysis_radius.y = FLAGS.radius - ffn_fov_radius[1]
+    resegmentation_request.analysis_radius.z = FLAGS.radius - ffn_fov_radius[2]
 
     # Write request to output file
     with open(FLAGS.output_file, "w") as out:
