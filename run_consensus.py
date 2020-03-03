@@ -12,22 +12,23 @@ so we'll fan out over that and then funnel those results into
 an output volume, which I guess we'll just keep as a memmaped
 hdf5 file.
 '''
+import numpy as np
+# We're trying to squeeze into uint32. Let's be careful about it.
+np.seterr(over='raise')
+
 import os
 import h5py
-import numpy as np
 import ppx.data_util as dx
 import multiprocessing
 from itertools import repeat
 import logging
 logging.basicConfig(level=logging.INFO)
 
-from google.protobuf import text_format
 from absl import app
 from absl import flags
 
 from ffn.inference import storage
 from ffn.inference import segmentation
-from ffn.utils import bounding_box_pb2
 from ffn.utils import bounding_box
 
 
@@ -41,13 +42,6 @@ flags.DEFINE_string(
     'The first is given a little more authority.'
 )
 flags.DEFINE_string('outspec', None, 'hdf5 spec to write to.')
-flags.DEFINE_string(
-    'bounding_box',
-    None,
-    'BoundingBox pbtxt file.',
-)
-flags.DEFINE_integer('subvolume_size', -1, '')
-flags.DEFINE_integer('subvolume_overlap', 48, '')
 flags.DEFINE_integer(
     'min_ffn_size',
     0,
@@ -173,33 +167,38 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None):
     intersection = intersection.nonzero()
     do_intersection = bool(intersection[0].size)
 
+    # Scratch space for intermediate results
+    scratch = np.zeros(a.shape, dtype=np.uint32)
+
     # OK, do the tasks.
 
     # 0.
     out = np.zeros(a.shape, dtype=np.uint32)
-    scratch = np.zeros(a.shape, dtype=np.uint32)
     if do_not_b:
-        out[not_b] = a[not_b]
+        # Work in scratch to avoid weird collisions
+        scratch[not_b] = a[not_b]
         id_map = segmentation.clean_up(
-            out.reshape(orig_shape),
-            min_size=min_size,
+            scratch.reshape(orig_shape),
+            min_size=0,
             return_id_map=True,
         )
+
+        # Write to out
+        out[:] = scratch
+
+        # Correct some IDs, writing to `out` but looking at `cratch`
         if maintain_a == 'all':
             # Remap connected component IDs back to orig
             # IDs. So, this means that only some crumbs
             # are removed, and that there might remain some
             # disconnected crumbs.
-            # XXX This might not be the right call...
-            # The other possible behavior is to have no merges
-            # across subvolume boundaries. What to do...
             for ccid, origid in id_map.items():
-                out[out == ccid] = origid
+                out[scratch == ccid] = origid
         elif maintain_a == 'edge':
             # Remap those that live on the border, and give
             # new contig IDs to the others
             for ccid, origid in id_map.items():
-                cc_idx = (out == ccid).nonzero()
+                cc_idx = (scratch == ccid).nonzero()
                 on_border = any(
                     inds[0] == 0 or inds[-1] + 1 == axlim
                     for inds, axlim in zip(cc_idx, orig_shape)
@@ -209,22 +208,34 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None):
                 else:
                     out[cc_idx] = min_new_id
                     min_new_id += 1
+        else:
+            assert False
+
+        # Clear scratch
+        scratch[not_b] = 0
+
+    assert min_new_id < np.iinfo(np.uint32).max
 
     # 1.
     if do_b_not_a:
         scratch[b_not_a] = b[b_not_a]
         segmentation.clean_up(
             scratch.reshape(orig_shape),
-            min_size=min_size,
+            min_size=0,
         )
+
+        # Get contiguous labels, >= min_new_id
         scratch[b_not_a] = (
             min_new_id
             + segmentation.make_labels_contiguous(scratch[b_not_a])[0]
         )
+
         # Update ID space
         min_new_id = scratch.max() + 1
         assert min_new_id < np.iinfo(np.uint32).max
         out[b_not_a] = scratch[b_not_a].astype(np.uint32)
+
+        # Clear scratch
         scratch[b_not_a] = 0
 
     # 2.
@@ -241,7 +252,7 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None):
         scratch[intersection] = inter_split.astype(np.uint32)
         segmentation.clean_up(
             scratch.reshape(orig_shape),
-            min_size=min_size,
+            min_size=0,
         )
         scratch[intersection] = (
             min_new_id
@@ -250,13 +261,22 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None):
         assert scratch.max() < np.iinfo(np.uint32).max
         out[intersection] = scratch[intersection].astype(np.uint32)
 
-    del scratch
-
     # 4.
     new = (out > old_max_id).nonzero()
     out[new] = (
         old_max_id + 1 + segmentation.make_labels_contiguous(out[new])[0]
     )
+
+    # Clean up dust without changing IDs using scratch space
+    scratch[:] = out
+    id_map = segmentation.clean_up(
+        scratch, min_size=min_size, return_id_map=True
+    )
+    out[:] = scratch
+    for cc, orig in id_map:
+        out[scratch == cc] = orig
+
+    del scratch
 
     return out.reshape(orig_shape), out.max(), old_max_id, new
 
@@ -296,6 +316,15 @@ def _thread_main(subvolume__params):
     return merge, sv_max_id, sv_old_max_id, new_mask, slicer
 
 
+def get_subvolumes(segdir):
+    bboxes = []
+    for corner in storage.get_existing_corners(segdir):
+        size = storage.load_segmentation(segdir, corner).shape
+        # XXX Reverse size, right?
+        bboxes.append(bounding_box.BoundingBox(start=corner, size=size[::-1]))
+    return bboxes
+
+
 def main(_):
     # Check args ------------------------------------------------------
     # Outspec needs to be simple h5
@@ -310,32 +339,26 @@ def main(_):
     assert len(segdirs) > 0
     assert all(os.path.isdir(sd) for sd in segdirs)
 
-    # Global bounding box ---------------------------------------------
-    outer_bbox_pb = bounding_box_pb2.BoundingBox()
-    if FLAGS.bounding_box:
-        with open(FLAGS.bounding_box) as bbox_f:
-            text_format.Parse(bbox_f.read(), outer_bbox_pb)
-    # Cast to fancy bounding box with subvolume calculations
-    outer_bbox = bounding_box.BoundingBox(outer_bbox_pb)
-
     # Subvolumes ------------------------------------------------------
+    allsvs_ = [get_subvolumes(sd) for sd in segdirs]
+    allsvs = allsvs_[0]
 
-    # Munge subvolume size to tuple
-    if FLAGS.subvolume_size < 0:
-        # Use full volume if not set
-        svsize = outer_bbox.size
-    else:
-        svsize = [FLAGS.subvolume_size] * 3
-    # Get subvolume maker
-    svcalc = bounding_box.OrderlyOverlappingCalculator(
-        outer_bbox,
-        svsize,
-        [FLAGS.subvolume_overlap] * 3,
-        include_small_sub_boxes=True,
-    )
-    nsb = svcalc.num_sub_boxes()
+    # Check all the same
+    for svs in allsvs_[1:]:
+        assert all(a == b for a, b in zip(allsvs, svs))
+    del allsvs_
 
-    # Get "tiers" of subvolumes
+    # See what we got...
+    nsb = len(allsvs)
+    outer_bbox = bounding_box.containing(*allsvs)
+
+    # Log info
+    logging.info(f"Found num subvols {nsb}")
+    print('The boxes:\n\t', '\n\t'.join(str(s) for s in allsvs))
+    print('The slices:\n\t', '\n\t'.join(str(s.to_slice()) for s in allsvs))
+    print('The global bounding box:', outer_bbox)
+
+    # Get "tiers" of subvolumes to help with parallelism
     # The idea is that within each tier, the subvolumes don't overlap.
     # So, an entire tier can be run (in parallel) and merged into the
     # main volume (in parallel), and once a previous tier has been
@@ -348,11 +371,8 @@ def main(_):
     # overlap=0). The tiers are 0, x+, y+, and xy+.
     # In 3D, we need 8 tiers: 0, x+, y+, z+, xy+, xz+, yz+, xyz+.
     # How can we get these from the subvolume calculator?
-    # Honestly, it's easier to do a more brute force approach than to
-    # derive some algorithm using intuition from 3D chessboard. But
-    # we'll make sure to check that we end up with 8 tiers, the result
-    # should be equivalent.
-    allsvs = list(svcalc.generate_sub_boxes())
+    # Honestly, it's easier to brute force it than to derive some
+    # algorithm using intuition from 3D chessboard.
     tiers = []
     unused_indices = list(range(len(allsvs)))
     while unused_indices:
@@ -368,7 +388,8 @@ def main(_):
                 new_tier.append(sv)
         unused_indices = new_unused_indices
         tiers.append(new_tier)
-    assert len(tiers) == 8
+
+    assert len(tiers) == min(nsb, 8)
     assert sum(len(tier) for tier in tiers) == nsb
     logging.info(f'Tier lengths: {[len(tier) for tier in tiers]}')
 
