@@ -142,26 +142,30 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None):
     # Non-0 areas
     a_fg = a != 0
     b_fg = b != 0
+    not_a = np.logical_not(a_fg)
+
+    # Alloc output
+    out = np.zeros(a.shape, dtype=np.uint32)
 
     # Tasks:
     # 0. Write this area out untouched
-    not_b = np.logical_not(b_fg)
+    a_not_b = np.logical_and(a_fg, np.logical_not(b_fg))
     # 1. Re-map IDs to be at least min_new_id here
-    b_not_a = np.logical_and(b_fg, np.logical_not(a_fg))
+    b_not_a = np.logical_and(b_fg, not_a)
     # 2. Need to split-merge A and B here, and then make
     #    sure the IDs are larger than the max from step 1.
     intersection = np.logical_and(a_fg, b_fg)
-    # 3. Clean up.
-    #    This has to be done inside each step to ensure
-    #    consistency of the ID space.
-    # 4. Re-contig new IDs (i.e. IDs > old_max_id)
+    # 4. Re-contig new IDs (i.e. IDs > old_max_id) and clean up.
 
-    # Just checkin:
-    assert np.logical_xor(not_b, np.logical_xor(b_not_a, intersection)).all()
+    if maintain_a == 'bool_test':
+        out[a_not_b] = 1
+        out[b_not_a] = 2
+        out[intersection] = 3
+        return out.reshape(orig_shape), out.max(), old_max_id, ([],)
 
     # Sparsify these real quick since we loop thru them a few times
-    not_b = not_b.nonzero()
-    do_not_b = bool(not_b[0].size)
+    a_not_b = a_not_b.nonzero()
+    do_a_not_b = bool(a_not_b[0].size)
     b_not_a = b_not_a.nonzero()
     do_b_not_a = bool(b_not_a[0].size)
     intersection = intersection.nonzero()
@@ -173,28 +177,20 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None):
     # OK, do the tasks.
 
     # 0.
-    out = np.zeros(a.shape, dtype=np.uint32)
-    if do_not_b:
-        # Work in scratch to avoid weird collisions
-        scratch[not_b] = a[not_b]
-        id_map = segmentation.clean_up(
-            scratch.reshape(orig_shape),
-            min_size=0,
-            return_id_map=True,
-        )
-
-        # Write to out
-        out[:] = scratch
-
-        # Correct some IDs, writing to `out` but looking at `cratch`
+    logging.info(" > 0 -- A \\ B")
+    if do_a_not_b:
         if maintain_a == 'all':
-            # Remap connected component IDs back to orig
-            # IDs. So, this means that only some crumbs
-            # are removed, and that there might remain some
-            # disconnected crumbs.
-            for ccid, origid in id_map.items():
-                out[scratch == ccid] = origid
+            scratch[a_not_b] = a[a_not_b]
         elif maintain_a == 'edge':
+            # Correct some IDs, writing to `out` but looking at `scratch`
+            # Work in scratch to avoid weird collisions
+            scratch[a_not_b] = a[a_not_b]
+            id_map = segmentation.clean_up(
+                scratch.reshape(orig_shape),
+                min_size=0,
+                return_id_map=True,
+            )
+            out[:] = scratch
             # Remap those that live on the border, and give
             # new contig IDs to the others
             for ccid, origid in id_map.items():
@@ -212,11 +208,12 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None):
             assert False
 
         # Clear scratch
-        scratch[not_b] = 0
+        scratch[a_not_b] = 0
 
     assert min_new_id < np.iinfo(np.uint32).max
 
     # 1.
+    logging.info(" > 1 -- B \\ A")
     if do_b_not_a:
         scratch[b_not_a] = b[b_not_a]
         segmentation.clean_up(
@@ -239,6 +236,7 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None):
         scratch[b_not_a] = 0
 
     # 2.
+    logging.info(" > 2 -- B & A")
     if do_intersection:
         # Get a copy of A in the intersection
         inter_split = (a[intersection] + 0).astype(np.uint64)
@@ -262,21 +260,19 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None):
         out[intersection] = scratch[intersection].astype(np.uint32)
 
     # 4.
+    logging.info(" > 4 -- Clean")
     new = (out > old_max_id).nonzero()
     out[new] = (
         old_max_id + 1 + segmentation.make_labels_contiguous(out[new])[0]
     )
 
-    # Clean up dust without changing IDs using scratch space
+    # Clean up dust without changing IDs
+    # (Do CC cleaning on scratch and then update out's background.)
     scratch[:] = out
-    id_map = segmentation.clean_up(
-        scratch, min_size=min_size, return_id_map=True
+    segmentation.clean_up(
+        scratch.reshape(orig_shape), min_size=min_size
     )
-    out[:] = scratch
-    for cc, orig in id_map:
-        out[scratch == cc] = orig
-
-    del scratch
+    out[not_a] *= scratch[not_a] != 0
 
     return out.reshape(orig_shape), out.max(), old_max_id, new
 
@@ -286,8 +282,7 @@ def _thread_main(subvolume__params):
     segmentation_dirs = params['segmentation_dirs']
     min_ffn_size = params['min_ffn_size']
     min_split_size = params['min_split_size']
-    outf = params['outf']
-    dset = params['dset']
+    maintain_a = params['maintain_a']
 
     # Split consensus in subvoume
     logging.info('Calling split consensus')
@@ -295,33 +290,44 @@ def _thread_main(subvolume__params):
         subvolume, segmentation_dirs, min_ffn_size, min_split_size
     )
 
-    # Read current state
-    # NOTE: We don't need to lock, because the tiering system
-    #       ensures that this region cannot be written when there
-    #       is a chance it would be read.
-    # Need to set libver to use swmr
-    with h5py.File(outf, 'r', libver='latest', swmr=True) as seg_outf:
-        cur_seg_out = seg_outf[dset][slicer]
+    # Read current state SWMR style.
+    data = _thread_main.data
+    data.id.refresh()
+    data.refresh()
+    cur_seg_out = data[slicer]
 
     # Merge subvol with its friend in the h5 array
+    if not (cur_seg_out > 0).any():
+        logging.info('Blank main, no merge necessary.')
+    else:
+        logging.info('Main not blank, gotta merge.')
+
     logging.info('Merging with main')
     merge, sv_max_id, sv_old_max_id, new_mask = merge_into_main(
         cur_seg_out,
         result,
         old_max_id=0,
         min_size=min_split_size,
+        maintain_a=maintain_a,
     )
 
     logging.info('Returning.')
     return merge, sv_max_id, sv_old_max_id, new_mask, slicer
 
 
+def _thread_init(outf, dset):
+    # Need to set libver to use swmr
+    seg_outf = h5py.File(outf, 'r', libver='latest', swmr=True)
+    _thread_main.data = seg_outf[dset]
+
+
 def get_subvolumes(segdir):
     bboxes = []
-    for corner in storage.get_existing_corners(segdir):
-        size = storage.load_segmentation(segdir, corner).shape
+    for corner in sorted(storage.get_existing_corners(segdir)):
+        seg, _ = storage.load_segmentation(segdir, corner, split_cc=False)
         # XXX Reverse size, right?
-        bboxes.append(bounding_box.BoundingBox(start=corner, size=size[::-1]))
+        size = seg.shape
+        bboxes.append(bounding_box.BoundingBox(start=corner, size=size))
     return bboxes
 
 
@@ -350,12 +356,12 @@ def main(_):
 
     # See what we got...
     nsb = len(allsvs)
-    outer_bbox = bounding_box.containing(*allsvs)
 
     # Log info
     logging.info(f"Found num subvols {nsb}")
     print('The boxes:\n\t', '\n\t'.join(str(s) for s in allsvs))
     print('The slices:\n\t', '\n\t'.join(str(s.to_slice()) for s in allsvs))
+    outer_bbox = bounding_box.containing(*allsvs)
     print('The global bounding box:', outer_bbox)
 
     # Get "tiers" of subvolumes to help with parallelism
@@ -400,14 +406,13 @@ def main(_):
         'segmentation_dirs': FLAGS.segmentation_dirs,
         'min_ffn_size': FLAGS.min_ffn_size,
         'min_split_size': FLAGS.min_split_size,
-        'outf': outf,
-        'dset': dset,
+        'maintain_a': FLAGS.maintain_a,
     }
 
     # This is the only writeable reference to our output file.
     # Only the main thread writes. Other threads will read.
     # h5 needs libver='latest' to use single writer/multiple reader.
-    with h5py.File(outf, 'w', libver='latest') as seg_outf:
+    with h5py.File(outf, 'w', libver='latest', swmr=True) as seg_outf:
         # Note the fillvalue=0, so we can depend on the seg to
         # be initialized to background.
         seg_out = seg_outf.create_dataset(
@@ -431,7 +436,16 @@ def main(_):
             max(len(tier) for tier in tiers),
             multiprocessing.cpu_count()
         )
-        with multiprocessing.pool.Pool(ncpu) as pool:
+
+        # XXX The SWMR thing only seems to work with threads. It
+        #     doesn't make a difference for performance since this
+        #     is numpy heavy code, so whatever, but seriously, I don't
+        #     know why it's like this?
+        with multiprocessing.pool.ThreadPool(
+            ncpu,
+            initializer=_thread_init,
+            initargs=(outf, dset),
+        ) as pool:
             # Loop over tiers outside imap to ensure that
             # each tier is run independently of the others.
             n_done = 0
@@ -468,16 +482,20 @@ def main(_):
                         max_id, merge.max()
                     )
                     seg_outf['max_id'][0] = new_max_id
+                    seg_outf['max_id'].flush()
 
                     # Write to the hdf5
+                    logging.info('Write info %s %s %s', slicer, merge.shape, seg_out[slicer].shape)
+                    logging.info('Before %s', (seg_out[slicer] > 0).any())
                     seg_out[slicer] = merge
+                    seg_out.flush()
+                    logging.info('After %s', (seg_out[slicer] > 0).any())
 
                     n_done += 1
                     logging.info(f'{n_done} done out of {nsb}')
                     logging.info(f'Old max id: {max_id}. New: {new_max_id}')
 
-                # Make sure hdf5 writes before moving on to next tier
-                seg_out.flush()
+                # seg_outf.flush()
 
 
 if __name__ == '__main__':
