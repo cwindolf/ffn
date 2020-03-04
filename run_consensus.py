@@ -22,6 +22,8 @@ import ppx.data_util as dx
 import multiprocessing
 from itertools import repeat
 import logging
+import joblib
+from joblib import delayed
 logging.basicConfig(level=logging.INFO)
 
 from absl import app
@@ -81,7 +83,7 @@ def split_merge_sv(subvolume, segmentation_dirs, min_ffn_size, min_split_size):
     return tuple(reversed(subvolume.to_slice())), seg
 
 
-def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None):
+def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None, nsubthreads=1):
     """Merge a new segmentation `b` into the large vol
 
     This merges a new subvolume `b` into the main segmentation,
@@ -143,13 +145,14 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None):
     a_fg = a != 0
     b_fg = b != 0
     not_a = np.logical_not(a_fg)
+    not_b = np.logical_not(b_fg)
 
     # Alloc output
     out = np.zeros(a.shape, dtype=np.uint32)
 
     # Tasks:
     # 0. Write this area out untouched
-    a_not_b = np.logical_and(a_fg, np.logical_not(b_fg))
+    a_not_b = np.logical_and(a_fg, not_b)
     # 1. Re-map IDs to be at least min_new_id here
     b_not_a = np.logical_and(b_fg, not_a)
     # 2. Need to split-merge A and B here, and then make
@@ -191,19 +194,38 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None):
                 return_id_map=True,
             )
             out[:] = scratch
+
             # Remap those that live on the border, and give
             # new contig IDs to the others
-            for ccid, origid in id_map.items():
-                cc_idx = (scratch == ccid).nonzero()
+
+            # Thread remaps if necessary, else returns mask for
+            # new ID assignment on main thread.
+
+            def _remap_if_nec(ccid, origid):
+                cc_idx = (scratch.reshape(orig_shape) == ccid).nonzero()
                 on_border = any(
-                    inds[0] == 0 or inds[-1] + 1 == axlim
+                    0 in inds or axlim - 1 in inds
                     for inds, axlim in zip(cc_idx, orig_shape)
                 )
+                cc_idx_flat = np.ravel_multi_index(cc_idx, orig_shape)
                 if on_border:
-                    out[cc_idx] = origid
+                    out[cc_idx_flat] = origid
+                    return None
                 else:
-                    out[cc_idx] = min_new_id
-                    min_new_id += 1
+                    return cc_idx_flat
+
+            # Loop through new CCs
+            with joblib.Parallel(
+                nsubthreads, require='sharedmem', pre_dispatch='all'
+            ) as par:
+                for res in par(
+                    delayed(_remap_if_nec)(ccid, origid)
+                    for ccid, origid in id_map.items()
+                ):
+                    if res is not None:
+                        out[res] = min_new_id
+                        min_new_id += 1
+
         else:
             assert False
 
@@ -309,16 +331,19 @@ def _thread_main(subvolume__params):
         old_max_id=0,
         min_size=min_split_size,
         maintain_a=maintain_a,
+        nsubthreads=_thread_main.nsubthreads,
     )
 
     logging.info('Returning.')
     return merge, sv_max_id, sv_old_max_id, new_mask, slicer
 
 
-def _thread_init(outf, dset):
+def _thread_init(outf, dset, nsubthreads):
     # Need to set libver to use swmr
+    logging.info("Initializing thread")
     seg_outf = h5py.File(outf, 'r', libver='latest', swmr=True)
     _thread_main.data = seg_outf[dset]
+    _thread_main.nsubthreads = nsubthreads
 
 
 def get_subvolumes(segdir):
@@ -432,19 +457,21 @@ def main(_):
         seg_outf.swmr_mode = True
 
         # Make an appropriately sized process pool
-        ncpu = max(
-            max(len(tier) for tier in tiers),
-            multiprocessing.cpu_count()
+        ncpu = multiprocessing.cpu_count()
+        nthreads = min(
+            max(map(len, tiers)),
+            ncpu,
         )
+        nsubthreads = int(np.ceil(ncpu / min(map(len, tiers))))
 
         # XXX The SWMR thing only seems to work with threads. It
         #     doesn't make a difference for performance since this
         #     is numpy heavy code, so whatever, but seriously, I don't
         #     know why it's like this?
         with multiprocessing.pool.ThreadPool(
-            ncpu,
+            nthreads,
             initializer=_thread_init,
-            initargs=(outf, dset),
+            initargs=(outf, dset, nsubthreads),
         ) as pool:
             # Loop over tiers outside imap to ensure that
             # each tier is run independently of the others.
@@ -477,7 +504,7 @@ def main(_):
                         sv_flat[new_mask] += id_diff
 
                     # Update the global max id
-                    logging.info(f'Same? {sv_flat.max()} {merge.max()}')
+                    assert sv_flat.max() == merge.max()
                     new_max_id = max(
                         max_id, merge.max()
                     )
@@ -485,11 +512,8 @@ def main(_):
                     seg_outf['max_id'].flush()
 
                     # Write to the hdf5
-                    logging.info('Write info %s %s %s', slicer, merge.shape, seg_out[slicer].shape)
-                    logging.info('Before %s', (seg_out[slicer] > 0).any())
                     seg_out[slicer] = merge
                     seg_out.flush()
-                    logging.info('After %s', (seg_out[slicer] > 0).any())
 
                     n_done += 1
                     logging.info(f'{n_done} done out of {nsb}')
