@@ -55,7 +55,7 @@ flags.DEFINE_integer(
     'Minimum segment size to consider split consensus output viable'
 )
 flags.DEFINE_string(
-    'maintain_a', None, 'all, edge, or do not set the flag.'
+    'maintain_a', 'all', 'You probably want "all".'
 )
 
 
@@ -83,7 +83,9 @@ def split_merge_sv(subvolume, segmentation_dirs, min_ffn_size, min_split_size):
     return tuple(reversed(subvolume.to_slice())), seg
 
 
-def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None, nsubthreads=1):
+def merge_into_main(
+    a, b, old_max_id, min_size=0, maintain_a=None, nsubthreads=1
+):
     """Merge a new segmentation `b` into the large vol
 
     This merges a new subvolume `b` into the main segmentation,
@@ -182,8 +184,8 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None, nsubthreads=1
     # 0.
     logging.info(" > 0 -- A \\ B")
     if do_a_not_b:
-        if maintain_a == 'all':
-            scratch[a_not_b] = a[a_not_b]
+        if maintain_a in ('alloutside', 'all'):
+            out[a_not_b] = a[a_not_b]
         elif maintain_a == 'edge':
             # Correct some IDs, writing to `out` but looking at `scratch`
             # Work in scratch to avoid weird collisions
@@ -225,12 +227,10 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None, nsubthreads=1
                     if res is not None:
                         out[res] = min_new_id
                         min_new_id += 1
-
+            # Clear scratch
+            scratch[a_not_b] = 0
         else:
             assert False
-
-        # Clear scratch
-        scratch[a_not_b] = 0
 
     assert min_new_id < np.iinfo(np.uint32).max
 
@@ -260,26 +260,31 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None, nsubthreads=1
     # 2.
     logging.info(" > 2 -- B & A")
     if do_intersection:
-        # Get a copy of A in the intersection
-        inter_split = (a[intersection] + 0).astype(np.uint64)
-        # Split merge there. Split merge is safe (abelian...) because
-        # there is no background.
-        segmentation.split_segmentation_by_intersection(
-            inter_split, b[intersection].astype(np.uint64), 0
-        )
-        inter_split = 1 + segmentation.make_labels_contiguous(inter_split)[0]
-        assert inter_split.max() < np.iinfo(np.uint32).max
-        scratch[intersection] = inter_split.astype(np.uint32)
-        segmentation.clean_up(
-            scratch.reshape(orig_shape),
-            min_size=0,
-        )
-        scratch[intersection] = (
-            min_new_id
-            + segmentation.make_labels_contiguous(scratch[intersection])[0]
-        )
-        assert scratch.max() < np.iinfo(np.uint32).max
-        out[intersection] = scratch[intersection].astype(np.uint32)
+        if maintain_a == 'all':
+            out[intersection] = a[intersection]
+        else:
+            # Get a copy of A in the intersection
+            inter_split = (a[intersection] + 0).astype(np.uint64)
+            # Split merge there. Split merge is safe (abelian...) because
+            # there is no background.
+            segmentation.split_segmentation_by_intersection(
+                inter_split, b[intersection].astype(np.uint64), 0
+            )
+            inter_split = (
+                1 + segmentation.make_labels_contiguous(inter_split)[0]
+            )
+            assert inter_split.max() < np.iinfo(np.uint32).max
+            scratch[intersection] = inter_split.astype(np.uint32)
+            segmentation.clean_up(
+                scratch.reshape(orig_shape),
+                min_size=0,
+            )
+            scratch[intersection] = (
+                min_new_id
+                + segmentation.make_labels_contiguous(scratch[intersection])[0]
+            )
+            assert scratch.max() < np.iinfo(np.uint32).max
+            out[intersection] = scratch[intersection].astype(np.uint32)
 
     # 4.
     logging.info(" > 4 -- Clean")
@@ -288,7 +293,7 @@ def merge_into_main(a, b, old_max_id, min_size=0, maintain_a=None, nsubthreads=1
         old_max_id + 1 + segmentation.make_labels_contiguous(out[new])[0]
     )
 
-    # Clean up dust without changing IDs
+    # Clean up dust ***only in `B \ A`*** without changing IDs
     # (Do CC cleaning on scratch and then update out's background.)
     scratch[:] = out
     segmentation.clean_up(
