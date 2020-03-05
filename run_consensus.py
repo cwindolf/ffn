@@ -88,6 +88,13 @@ def merge_into_main(
 ):
     """Merge a new segmentation `b` into the large vol
 
+    Below is still sort of interesting, but my thought is now
+    that the maintain_a='all' case is the only good one. With
+    that in mind we can probably simplify the logic a lot.
+    I think it's worth doing so that future readers don't
+    get mixed up and think that all of this code is worth
+    understanding.
+
     This merges a new subvolume `b` into the main segmentation,
     where `a` is the corresponding subvolume in the main
     segmentation.
