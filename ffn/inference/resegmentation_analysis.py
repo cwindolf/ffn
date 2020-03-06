@@ -16,16 +16,17 @@
 
 import re
 
-import google3
 import numpy as np
 from scipy import ndimage
 
-from google3.pyglib import gfile
-from google3.pyglib import logging
+from tensorflow import gfile
+from tensorflow import logging
 
-from google3.research.neuromancer.segmentation.ffn import resegmentation_pb2
-from google3.research.neuromancer.segmentation.ffn import storage
-from google3.research.neuromancer.segmentation.python import pywrapsegment_util
+from ffn.inference import resegmentation_pb2
+from ffn.inference import storage
+
+# Commenting this breaks endpoint resementation.
+# from google3.research.neuromancer.segmentation.python import pywrapsegment_util
 
 
 class InvalidBaseSegmentatonError(Exception):
