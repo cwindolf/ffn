@@ -57,6 +57,9 @@ import ppx.data_util as dx
 # Faster than skfmm and scipy.
 import edt
 
+from scipy.spatial import distance
+from skimage import segmentation
+
 from ffn.utils import bounding_box_pb2
 from ffn.utils import bounding_box
 from ffn.inference import inference_pb2
@@ -91,6 +94,13 @@ flags.DEFINE_string(
     "figure out the `ResegmentationPoint`s.",
 )
 
+
+flags.DEFINE_string(
+    "method",
+    "pdist",
+    "edt or pdist. Should be equivalent (???), pdist is faster (???)",
+)
+
 flags.DEFINE_integer(
     "radius",
     96,
@@ -104,7 +114,7 @@ flags.DEFINE_integer("subdir_digits", 0, "See ResegmentationRequest proto.")
 flags.DEFINE_integer("max_retry_iters", 1, "See ResegmentationRequest proto.")
 flags.DEFINE_float(
     "segment_recovery_fraction",
-    None,
+    0.5,
     "Important one. See ResegmentationRequest proto.",
 )
 
@@ -148,9 +158,8 @@ class PairDetector:
     """
 
     BUCKET_SIZE = 64
-    MAX_DIST = np.sqrt(3 * 64 ** 2)
 
-    def __init__(self, init_segmentation_spec, bbox):
+    def __init__(self, init_segmentation_spec, bbox, method="edt"):
         """Constructor finds the requested pairs.
 
         Warning, it looks at the FLAGS.
@@ -192,7 +201,7 @@ class PairDetector:
         with multiprocessing.pool.Pool(
             FLAGS.nworkers,
             initializer=PairDetector.proc_initializer,
-            initargs=(init_segmentation_spec, svcalc),
+            initargs=(init_segmentation_spec, svcalc, method),
         ) as pool, tqdm(
             total=svcalc.num_sub_boxes(),
             smoothing=0.0,
@@ -244,7 +253,7 @@ class PairDetector:
             yield id_a, id_b, point
 
     @staticmethod
-    def proc_initializer(init_segmentation_spec, svcalc):
+    def proc_initializer(init_segmentation_spec, svcalc, method):
         """Manage variables that don't change across subvolumes."""
         if FLAGS.bigmem:
             global init_segmentation
@@ -254,6 +263,7 @@ class PairDetector:
             )
         PairDetector.process_subvolume.init_segmentation = init_segmentation
         PairDetector.process_subvolume.svcalc = svcalc
+        PairDetector.process_subvolume.method = method
 
     @staticmethod
     def process_subvolume(svid):
@@ -262,6 +272,8 @@ class PairDetector:
         Helper to add parallelism during __init__ since otherwise this
         would take like a day to run.
         """
+        method = PairDetector.process_subvolume.method
+
         # Get all segids for this subvolume index
         svcalc = PairDetector.process_subvolume.svcalc
         subvolume = svcalc.index_to_sub_box(svid)
@@ -271,49 +283,85 @@ class PairDetector:
 
         # Compute EDTs to help later compute the approach
         # points
-        edts = [edt.edt3d(seg_at_sv != segid) for segid in segids_at_sv]
+        if method == "edt":
+            edts = [edt.edt3d(seg_at_sv != segid) for segid in segids_at_sv]
+        elif method == "pdist":
+            # Get coords of points on body boundaries
+            shells = segmentation.find_boundaries(seg_at_sv, mode="inner")
+            pointclouds = [
+                np.array(
+                    np.logical_and(shells, seg_at_sv == segid).nonzero(),
+                    dtype=np.float32,
+                )
+                for segid in segids_at_sv
+            ]
+        else:
+            assert False
 
         # Get pair approaches for this subvolume
         pair2approach_at_sv = {}
         for j, segid in enumerate(segids_at_sv):
-            segid_edt = edts[j]
+
+            if method == "edt":
+                segid_edt = edts[j]
+            elif method == "pdist":
+                pointcloud = pointclouds[j]
+            else:
+                assert False
+
             for k in range(j + 1, len(segids_at_sv)):
                 other = segids_at_sv[k]
-                pair = int(segid), int(other)
+
                 # Find closest approach of other and segid in the
                 # subvolume. We define the closest approach to be
                 # the point whose sum distance to both bodies is
                 # smallest out of all the equidistant points.
-                other_edt = edts[k]
 
-                # Constrained minimum
-                # We consider a voxel to be more or less equidistant
-                # from the two bodies when the difference between its
-                # distances from the two bodies less than root 3,
-                # since that's the max distance between neighboring
-                # voxels in 3D. If we had no tolerance here, we would
-                # lose a lot of candidates due to grid effects.
-                equis = np.where(
-                    np.abs(segid_edt - other_edt) < np.sqrt(3.0) + 1e-5,
-                    segid_edt + other_edt,
-                    np.inf,
-                )
+                # Simple method with pairwise distances
+                if method == "pdist":
+                    other_pointcloud = pointclouds[k]
 
-                approach_offset = np.unravel_index(
-                    np.argmin(equis),
-                    equis.shape
-                )
-                approach_dist = segid_edt[approach_offset]
-                approach_dist_ = other_edt[approach_offset]
+                    # Compute pairwise distances between points
+                    dists = distance.cdist(pointcloud.T, other_pointcloud.T)
+                    amin = np.argmin(dists)
+                    ji, ki = np.unravel_index(np.atleast_1d(amin), dists.shape)
+                    ji, ki = ji[0], ki[0]
+                    approach_offset = np.round(
+                        0.5 * (pointcloud[:, ji] + other_pointcloud[:, ki])
+                    ).astype(int)
+                    approach_dist = dists[ji, ki]
+
+                # More "sophisticated" method with Euc distance transform
+                elif method == "edt":
+                    other_edt = edts[k]
+
+                    # Constrained minimum
+                    # We consider a voxel to be more or less equidistant
+                    # from the two bodies when the difference between its
+                    # distances from the two bodies less than root 3,
+                    # since that's the max distance between neighboring
+                    # voxels in 3D. If we had no tolerance here, we would
+                    # lose a lot of candidates due to grid effects.
+                    equis = np.where(
+                        np.abs(segid_edt - other_edt) < np.sqrt(3.0) + 1e-5,
+                        segid_edt + other_edt,
+                        np.inf,
+                    )
+
+                    approach_offset = np.unravel_index(
+                        np.argmin(equis), equis.shape
+                    )
+                    approach_dist = (
+                        segid_edt[approach_offset] + other_edt[approach_offset]
+                    )
+
+                else:
+                    assert False
 
                 # Check close enough
-                if approach_dist + approach_dist_ < FLAGS.max_distance:
-                    if abs(approach_dist - approach_dist_) > np.sqrt(3.0):
-                        logging.critical("Bad equidistance violation...")
-                        logging.critical(
-                            f"Pair was {pair} with dists "
-                            f"{approach_dist}, {other_edt[approach_offset]}"
-                        )
+                if approach_dist < FLAGS.max_distance:
+                    # Key into dictionary
+                    pair = int(segid), int(other)
 
                     # Convert local offset to global point
                     approach_point = subvolume.start + approach_offset
@@ -346,7 +394,9 @@ def main(unused_argv):
 
     # Build a data structure that will help us quickly check
     # whether two segments cannot possibly overlap.
-    pair_detector = PairDetector(FLAGS.init_segmentation, bbox)
+    pair_detector = PairDetector(
+        FLAGS.init_segmentation, bbox, method=FLAGS.method
+    )
 
     # Get the resegmentation points
     resegmentation_points = []
@@ -363,22 +413,20 @@ def main(unused_argv):
         resegmentation_points.append(rp)
 
     # Build the ResegmentationRequest
-    resegmentation_request = inference_pb2.ResegmentationRequest()
-
-    # Write the fields that are specified directly in our flags
-    resegmentation_request.output_directory = FLAGS.output_directory
-    resegmentation_request.subdir_digits = FLAGS.subdir_digits
-    resegmentation_request.max_retry_iters = FLAGS.max_retry_iters
-    resegmentation_request.segment_recovery_fraction = (
-        FLAGS.segment_recovery_fraction
+    logging.info("Building the ResegmentationRequest...")
+    resegmentation_request = inference_pb2.ResegmentationRequest(
+        inference=inference_request,
+        points=resegmentation_points,
+        output_directory=FLAGS.output_directory,
+        subdir_digits=FLAGS.subdir_digits,
+        max_retry_iters=FLAGS.max_retry_iters,
+        segment_recovery_fraction=FLAGS.segment_recovery_fraction,
     )
 
-    # Add init_segmentation field to infreq and save into RR
-    inference_request.init_segmentation = FLAGS.init_segmentation
-    resegmentation_request.inference = inference_request
+    # Some fields are easier to just set.
 
-    # Add points
-    resegmentation_request.points = resegmentation_points
+    # Patch the inference request to point to the initial segmentation
+    resegmentation_request.inference.init_segmentation.hdf5 = FLAGS.init_segmentation  # noqa
 
     # Resegmentation and analysis radius
     resegmentation_request.radius.x = FLAGS.radius
