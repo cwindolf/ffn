@@ -32,6 +32,8 @@ flags.DEFINE_string(
     ".npy path in the neuclease merge table format.",
 )
 
+VOXEL_SZ = [1, 1, 1]
+
 # mpi-style script level parallelism
 flags.DEFINE_integer('rank', -1, 'My worker id.')
 flags.DEFINE_integer('nworkers', -1, 'Number of workers.')
@@ -149,7 +151,7 @@ def do_resegmentation():
     ) as par:
         for _ in par(
             joblib.delayed(resegmentation.process_point)(
-                resegmentation_request, runner, i
+                resegmentation_request, runner, i, VOXEL_SZ
             )
             for i in my_points
         ):
