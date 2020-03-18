@@ -298,7 +298,8 @@ def secgan_training_worker(
                 secgan.input_labeled: batch_L_0,
                 secgan.input_unlabeled: batch_U_0,
                 # Need to be supplied but won't do anything since
-                # we are not running the train op.
+                # we are not running the train op in the first
+                # run call.
                 secgan.fake_labeled: np.empty(
                     secgan.disc_input_shape, dtype=np.float32
                 ),
@@ -306,10 +307,10 @@ def secgan_training_worker(
                     secgan.disc_input_shape, dtype=np.float32
                 ),
             }
-            fd = [feed_dict]
 
             # Support for synchronous optimizers
             if FLAGS.synchronous:
+                fd = [feed_dict]
                 print(f'Running with a synchronous optimizer')
                 hooks += [tf.train.FeedFnHook(lambda: fd[0])]
                 hooks += (
@@ -337,7 +338,7 @@ def secgan_training_worker(
                 config=config,
                 scaffold=scaffold,
                 checkpoint_dir=FLAGS.train_dir,
-                save_summaries_secs=120,
+                save_summaries_secs=30,
                 save_checkpoint_secs=300,
                 hooks=hooks,
             ) as sess:
@@ -350,11 +351,24 @@ def secgan_training_worker(
                             break
                     logging.info(f'Worker task {FLAGS.task} coming online')
 
-                # Get some initial generated images, since they are
-                # needed to run the train op.
-                gen_L, gen_U = sess.run(
+                # Populate generated images before running train op
+                # (since the train op depends on the gens.)
+                # Need to run this in raw session so that it doesn't
+                # run the train op. (the mon session wants to run
+                # summaries, which depend on the train op...)
+                logging.info('First run without train op')
+                gen_L, gen_U = sess._tf_sess().run(
                     [secgan.generated_labeled, secgan.generated_unlabeled],
                     feed_dict=feed_dict,
+                )
+                assert np.isfinite(gen_L).all() and np.isfinite(gen_U).all()
+                logging.info(
+                    f'gen_L init stats: '
+                    f'{gen_L.min()}, {gen_L.mean()}, {gen_L.max()}'
+                )
+                logging.info(
+                    f'gen_U init stats: '
+                    f'{gen_U.min()}, {gen_U.mean()}, {gen_U.max()}'
                 )
 
                 # Now we can iterate happily.
@@ -366,7 +380,8 @@ def secgan_training_worker(
                         secgan.fake_labeled: pool_L.query(gen_L),
                         secgan.fake_unlabeled: pool_U.query(gen_U),
                     }
-                    fd[0] = feed_dict
+                    if FLAGS.synchronous:
+                        fd[0] = feed_dict
 
                     # run train op, get new gens.
                     _, gen_L, gen_U = sess.run(
