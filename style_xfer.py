@@ -4,7 +4,7 @@ import tensorflow as tf
 from sklearn.decomposition import PCA
 from sklearn.covariance import ShrunkCovariance
 from sklearn.covariance import MinCovDet
-import preprocessing.data_util as dx
+import ppx.data_util as dx
 import models
 from training import inputs
 from util import whiten
