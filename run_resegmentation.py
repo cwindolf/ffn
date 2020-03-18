@@ -25,7 +25,7 @@ flags.DEFINE_boolean(
     "resegmentation inferences, then run with this flag set to "
     "analyze the results of those resegmentations.",
 )
-flags.DEFINE_boolean(
+flags.DEFINE_string(
     "affinities_npy",
     "",
     "If --analyze_results, we will save affinities to this "
