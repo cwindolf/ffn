@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.special import logit
 from skimage.util import view_as_windows
-import preprocessing.data_util as dx
+import ppx.data_util as dx
 import logging
 
 
@@ -126,12 +126,12 @@ def multi_random_fovs(
         fov_size = (fov_size, fov_size, fov_size)
 
     # Load / preprocess array
-    logging.info(f'multi_fovs using secgan preprocessing.')
+    logging.info(f'multi_fovs using no!! preprocessing.')
     volumes = []
     for spec in volume_specs:
         v = dx.loadspec(spec).astype(np.float32)
-        v /= 127.5
-        v -= 1.0
+        # v /= 127.5
+        # v -= 1.0
         volumes.append(v)
 
     # Stride with fov_size to get patches
