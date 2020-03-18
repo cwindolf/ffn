@@ -1,7 +1,7 @@
 import argparse
 import glob
 import os
-import preprocessing.data_util as dx
+import ppx.data_util as dx
 
 
 swapped_template = """image {{
