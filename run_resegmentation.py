@@ -119,7 +119,7 @@ def do_resegmentation():
     else:
         logger.info("Loading resegmentation request from binary format...")
         with open(FLAGS.resegmentation_request, "rb") as reseg_req_f:
-            resegmentation_request.PaseFromString(reseg_req_f.read())
+            resegmentation_request.ParseFromString(reseg_req_f.read())
     logger.info("Done")
 
     # Figure out this rank's role (might be the only rank.)
