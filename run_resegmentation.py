@@ -109,11 +109,11 @@ def do_resegmentation():
     logger = logging.getLogger("reseg")
 
     # Get the ResegmentationRequest
-    logging.info("Loading resegmentation request...")
+    logger.info("Loading resegmentation request...")
     resegmentation_request = inference_pb2.ResegmentationRequest()
     with open(FLAGS.resegmentation_request, "r") as reseg_req_f:
         text_format.Parse(reseg_req_f.read(), resegmentation_request)
-    logging.info("Done")
+    logger.info("Done")
 
     # Figure out this rank's role (might be the only rank.)
     nworkers = FLAGS.nworkers if FLAGS.nworkers > 0 else 1
@@ -140,7 +140,7 @@ def do_resegmentation():
     # Launch threads
     logger.info("Starting resegmentation")
     with joblib.Parallel(
-        nthreads, prefer='threds', verbose=100
+        nthreads, prefer='threads', verbose=100
     ) as par:
         for _ in par(
             joblib.delayed(resegmentation.process_point)(
