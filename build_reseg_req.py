@@ -208,7 +208,7 @@ class PairDetector:
             total=svcalc.num_sub_boxes(),
             smoothing=0.0,
             mininterval=1.0,
-            ncols=100,
+            ncols=60,
         ) as t:
             t.set_description(f"0 / 0")
             for niter, (segids_at_sv, pair2approach_at_sv) in enumerate(
