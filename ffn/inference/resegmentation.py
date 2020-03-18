@@ -297,9 +297,9 @@ def process_point(request, runner, point_num, voxel_size):
   canvas._deregister_client()  # pylint:disable=protected-access
 
 
-def process(request, runner):
+def process(request, runner, voxel_size):
   num_points = len(request.points)
   for i in range(num_points):
     logging.info('processing %d/%d', i, num_points)
-    process_point(request, runner, i)
+    process_point(request, runner, i, voxel_size)
 
