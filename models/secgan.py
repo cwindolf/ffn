@@ -505,6 +505,12 @@ class SECGAN:
                     )
                     with tf.control_dependencies([D_u_train_op]):
                         self.train_op = tf.no_op(name='train_everyone')
+                        # self.train_op = tf.Print(
+                        #     tf.constant(0),
+                        #     [global_step],
+                        #     message='Run train op',
+                        #     name='train_everyone',
+                        # )
 
         # Saving / loading --------------------------------------------
         all_vars = G_vars + F_vars + D_u_vars + D_S_and_l_vars
