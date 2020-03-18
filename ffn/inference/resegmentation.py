@@ -67,8 +67,8 @@ def get_target_path(request, point_num):
 
   if request.subdir_digits > 1:
     m = hashlib.md5()
-    m.update(str(id_a))
-    m.update(str(id_b))
+    m.update(str(id_a).encode('utf-8'))
+    m.update(str(id_b).encode('utf-8'))
     output_dir = os.path.join(output_dir, m.hexdigest()[:request.subdir_digits])
   gfile.MakeDirs(output_dir)
 
