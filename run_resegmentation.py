@@ -137,8 +137,10 @@ def do_resegmentation():
 
     # Launch threads
     logger.info("Starting resegmentation")
-    with joblib.Parallel(require='sharedmem') as par:
-        for _ in par(nthreads)(
+    with joblib.Parallel(
+        nthreads, prefer='threds', verbose=100
+    ) as par:
+        for _ in par(
             joblib.delayed(resegmentation.process_point)(
                 resegmentation_request, runner, i
             )
