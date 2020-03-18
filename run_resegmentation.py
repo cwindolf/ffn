@@ -109,10 +109,15 @@ def do_resegmentation():
     logger = logging.getLogger("reseg")
 
     # Get the ResegmentationRequest
-    logger.info("Loading resegmentation request...")
     resegmentation_request = inference_pb2.ResegmentationRequest()
-    with open(FLAGS.resegmentation_request, "r") as reseg_req_f:
-        text_format.Parse(reseg_req_f.read(), resegmentation_request)
+    if FLAGS.resegmentation_request.endswith('txt'):
+        logger.info("Loading resegmentation request from text format...")
+        with open(FLAGS.resegmentation_request, "r") as reseg_req_f:
+            text_format.Parse(reseg_req_f.read(), resegmentation_request)
+    else:
+        logger.info("Loading resegmentation request from binary format...")
+        with open(FLAGS.resegmentation_request, "rb") as reseg_req_f:
+            resegmentation_request.PaseFromString(reseg_req_f.read())
     logger.info("Done")
 
     # Figure out this rank's role (might be the only rank.)

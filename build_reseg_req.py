@@ -68,7 +68,9 @@ from ffn.inference import inference_pb2
 flags.DEFINE_string(
     "output_file",
     None,
-    "Write the ResegmentationRequest as a text proto here.",
+    "Write the ResegmentationRequest proto here. "
+    "If this is a .pbtxt, will write proto in human-readable "
+    "text format. Else binary.",
 )
 
 flags.DEFINE_string(
@@ -443,8 +445,12 @@ def main(unused_argv):
     resegmentation_request.analysis_radius.z = FLAGS.radius - ffn_fov_radius[2]
 
     # Write request to output file
-    with open(FLAGS.output_file, "w") as out:
-        out.write(text_format.MessageToString(resegmentation_request))
+    if FLAGS.output_file.endswith('txt'):
+        with open(FLAGS.output_file, "w") as out:
+            out.write(text_format.MessageToString(resegmentation_request))
+    else:
+        with open(FLAGS.output_file, "wb") as out:
+            out.write(resegmentation_request.SerializeToString())
 
     logging.info(f"OK, I wrote {FLAGS.output_file}. Bye...")
 
