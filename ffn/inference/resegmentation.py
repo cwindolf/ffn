@@ -101,6 +101,7 @@ def get_canvas(point, radius, runner):
   subvol_size = radius * 2 + 1
   end = subvol_size + corner
 
+  logging.info('hi %s', runner.init_seg_volume.shape)
   if (np.any(corner < 0) or
       runner.init_seg_volume.shape[1] <= end[0] or
       runner.init_seg_volume.shape[2] <= end[1] or
