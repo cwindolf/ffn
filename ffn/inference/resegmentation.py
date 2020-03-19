@@ -302,4 +302,5 @@ def process(request, runner, voxel_size):
   for i in range(num_points):
     logging.info('processing %d/%d', i, num_points)
     process_point(request, runner, i, voxel_size)
+    logging.info('finished %d/%d', i, num_points)
 

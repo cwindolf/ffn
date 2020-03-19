@@ -1,3 +1,15 @@
+"""
+I recommend running this command inside GNU parallel like:
+
+ $ parallel --lb \
+   "srun $(SRUNFLAGS) python run_resegmentation.py \
+       --resegmentation_request XXX \
+       --rank {} --nworkers 4" \
+   ::: 0 1 2 3
+
+for easy rank-based parallelism.
+"""
+
 import numpy as np
 import os.path
 import logging
@@ -32,11 +44,14 @@ flags.DEFINE_string(
     ".npy path in the neuclease merge table format.",
 )
 
+# This is used by resegmentation during EDT to specify
+# anisotropy of the metric. Our voxels are isotropic so
+# not worried about setting this to physical units.
 VOXEL_SZ = [1, 1, 1]
 
 # mpi-style script level parallelism
-flags.DEFINE_integer('rank', -1, 'My worker id.')
-flags.DEFINE_integer('nworkers', -1, 'Number of workers.')
+flags.DEFINE_integer('rank', 0, 'My worker id.')
+flags.DEFINE_integer('nworkers', 1, 'Number of workers.')
 
 FLAGS = flags.FLAGS
 
@@ -108,7 +123,7 @@ def do_resegmentation():
     """Run inferences specified in a ResegmentationRequest."""
     # Configure logger
     logging.basicConfig(level=logging.DEBUG)
-    logger = logging.getLogger("reseg")
+    logger = logging.getLogger(f"[reseg rank{FLAGS.rank}]")
 
     # Get the ResegmentationRequest
     resegmentation_request = inference_pb2.ResegmentationRequest()
@@ -123,8 +138,6 @@ def do_resegmentation():
     logger.info("Done")
 
     # Figure out this rank's role (might be the only rank.)
-    nworkers = FLAGS.nworkers if FLAGS.nworkers > 0 else 1
-    rank = FLAGS.rank if FLAGS.nworkers > 0 else 0
     num_points = len(resegmentation_request.points)
     my_points = list(range(rank, num_points, nworkers))
     nthreads = resegmentation_request.inference.concurrent_requests
