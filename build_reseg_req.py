@@ -284,7 +284,7 @@ class PairDetector:
         # Get all segids for this subvolume index
         svcalc = PairDetector.process_subvolume.svcalc
         subvolume = svcalc.index_to_sub_box(svid)
-        logging.debug(f"Process subvolume {subvolume}")
+        logging.info(f"Process subvolume {subvolume}")
         init_segmentation = PairDetector.process_subvolume.init_segmentation
         seg_at_sv = init_segmentation[subvolume.to_slice()]
         segids_at_sv = np.setdiff1d(np.unique(seg_at_sv), [0])
