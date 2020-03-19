@@ -696,10 +696,18 @@ class Canvas(object):
     self.log_info('Loading initial segmentation from (zyx) %r:%r',
                   corner, end)
 
-    init_seg = volume[:,  #
-                      corner[0]:end[0],  #
-                      corner[1]:end[1],  #
-                      corner[2]:end[2]]
+    if volume.ndim == 4:
+      init_seg = volume[:,  #
+                        corner[0]:end[0],  #
+                        corner[1]:end[1],  #
+                        corner[2]:end[2]]
+    elif volume.ndim == 3:
+      init_seg = volume[None, # XXX add a new axis, ... why?
+                        corner[0]:end[0],  #
+                        corner[1]:end[1],  #
+                        corner[2]:end[2]]
+    else:
+      assert False
 
     init_seg, global_to_local = segmentation.make_labels_contiguous(init_seg)
     init_seg = init_seg[0, ...]
@@ -847,6 +855,7 @@ class Runner(object):
       if request.HasField('init_segmentation'):
         self.init_seg_volume = storage.decorated_volume(
             request.init_segmentation, cache_max_bytes=int(1e8))
+        logging.info("Runner loaded init_segmentation %s", self.init_seg_volume)
       else:
         self.init_seg_volume = None
 
