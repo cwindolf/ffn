@@ -181,7 +181,7 @@ class PairDetector:
             include_small_sub_boxes=True,
         )
         logging.info("Svcalc %s", svcalc)
-        reco_bb = bounding_box.containing(svcalc.generate_sub_boxes())
+        reco_bb = bounding_box.containing(*svcalc.generate_sub_boxes())
         logging.info("Reco BB %s", reco_bb)
 
         # Store all of the (sorted) pairs that have been
