@@ -46,7 +46,7 @@ import numpy as np
 from tqdm import tqdm
 import logging
 
-if 'DEBUG' in os.environ:
+if "DEBUG" in os.environ:
     logging.basicConfig(level=logging.DEBUG)
 else:
     logging.basicConfig(level=logging.INFO)
@@ -193,6 +193,10 @@ class PairDetector:
         # Might as well store the set of segids, while we're at it.
         segids = set()
 
+        # Also store bbox for approach points
+        min_approach = np.full(np.inf, 3)
+        max_approach = np.full(-np.inf, 3)
+
         if FLAGS.bigmem:
             # Load the whole segmentation into a global, so that worker
             # processes inherit the memory. If not set, worker processes
@@ -232,6 +236,8 @@ class PairDetector:
                         if dist > prev_dist:
                             continue
                     pair2approach[pair] = point, dist
+                    min_approach = np.minimum(min_approach, point)
+                    max_approach = np.maximum(max_approach, point)
 
                 # Update progress
                 t.update()
@@ -253,6 +259,8 @@ class PairDetector:
         self.pair2approach = pair2approach
         self.svcalc = svcalc
         self.segids = segids
+        self.min_approach = tuple(min_approach)
+        self.max_approach = tuple(max_approach)
 
     def pairs_and_points(self):
         """This is basically the reason this class exists."""
@@ -284,7 +292,6 @@ class PairDetector:
         # Get all segids for this subvolume index
         svcalc = PairDetector.process_subvolume.svcalc
         subvolume = svcalc.index_to_sub_box(svid)
-        logging.info(f"Process subvolume {subvolume}")
         init_segmentation = PairDetector.process_subvolume.init_segmentation
         seg_at_sv = init_segmentation[subvolume.to_slice()]
         segids_at_sv = np.setdiff1d(np.unique(seg_at_sv), [0])
@@ -405,6 +412,11 @@ def main(unused_argv):
     pair_detector = PairDetector(
         FLAGS.init_segmentation, bbox, method=FLAGS.method
     )
+    logging.info(
+        "Points were in bounding box: %s-%s",
+        pair_detector.min_approach,
+        pair_detector.max_approach,
+    )
 
     # Get the resegmentation points
     resegmentation_points = []
@@ -434,7 +446,9 @@ def main(unused_argv):
     # Some fields are easier to just set.
 
     # Patch the inference request to point to the initial segmentation
-    resegmentation_request.inference.init_segmentation.hdf5 = FLAGS.init_segmentation  # noqa
+    resegmentation_request.inference.init_segmentation.hdf5 = (
+        FLAGS.init_segmentation
+    )  # noqa
 
     # Resegmentation and analysis radius
     resegmentation_request.radius.x = FLAGS.radius
@@ -451,13 +465,12 @@ def main(unused_argv):
     resegmentation_request.analysis_radius.z = FLAGS.radius - ffn_fov_radius[2]
 
     # Write request to output file
-    if FLAGS.output_file.endswith('txt'):
+    if FLAGS.output_file.endswith("txt"):
         with open(FLAGS.output_file, "w") as out:
             out.write(text_format.MessageToString(resegmentation_request))
     else:
         with open(FLAGS.output_file, "wb") as out:
             out.write(resegmentation_request.SerializeToString())
-
     logging.info(f"OK, I wrote {FLAGS.output_file}. Bye...")
 
 
