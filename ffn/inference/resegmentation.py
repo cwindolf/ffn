@@ -101,11 +101,10 @@ def get_canvas(point, radius, runner):
   subvol_size = radius * 2 + 1
   end = subvol_size + corner
 
-  logging.info('hi %s', runner.init_seg_volume.shape)
   if (np.any(corner < 0) or
-      runner.init_seg_volume.shape[1] <= end[0] or
-      runner.init_seg_volume.shape[2] <= end[1] or
-      runner.init_seg_volume.shape[3] <= end[2]):
+      runner.init_seg_volume.shape[0] <= end[0] or
+      runner.init_seg_volume.shape[1] <= end[1] or
+      runner.init_seg_volume.shape[2] <= end[2]):
     logging.error('Not enough context for: %d, %d, %d; corner: %r; end: %r',
                   point[2], point[1], point[0], corner, end)
     return None, None
