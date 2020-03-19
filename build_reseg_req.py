@@ -161,11 +161,12 @@ class PairDetector:
 
     BUCKET_SIZE = 64
 
-    def __init__(self, init_segmentation_spec, bbox, method="edt"):
+    def __init__(self, init_segmentation_spec, bbox, method="pdist"):
         """Constructor finds the requested pairs.
 
         Warning, it looks at the FLAGS.
         """
+        logging.info(f"Spatial hashing {init_segmentation_spec} in {bbox}")
         # Chunk into subvolumes
         # (these will be buckets in the spatial hash)
         overlap = [int(np.ceil(2 * FLAGS.max_distance))] * 3
