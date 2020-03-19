@@ -40,12 +40,16 @@ passes to its `canvas.segment_at(...)`.
     closest approach. The solemn duty of this script is to determine
     these points, and send them off to `resegmentation.py`.
 """
+import os
 import json
 import numpy as np
 from tqdm import tqdm
 import logging
 
-logging.basicConfig(level=logging.INFO)
+if 'DEBUG' in os.environ:
+    logging.basicConfig(level=logging.DEBUG)
+else:
+    logging.basicConfig(level=logging.INFO)
 
 from google.protobuf import text_format
 from absl import app
@@ -280,6 +284,7 @@ class PairDetector:
         # Get all segids for this subvolume index
         svcalc = PairDetector.process_subvolume.svcalc
         subvolume = svcalc.index_to_sub_box(svid)
+        logging.debug(f"Process subvolume {subvolume}")
         init_segmentation = PairDetector.process_subvolume.init_segmentation
         seg_at_sv = init_segmentation[subvolume.to_slice()]
         segids_at_sv = np.setdiff1d(np.unique(seg_at_sv), [0])
