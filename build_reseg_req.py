@@ -194,8 +194,8 @@ class PairDetector:
         segids = set()
 
         # Also store bbox for approach points
-        min_approach = np.full(np.inf, 3)
-        max_approach = np.full(-np.inf, 3)
+        min_approach = np.full(3, np.inf)
+        max_approach = np.full(3, -np.inf)
 
         if FLAGS.bigmem:
             # Load the whole segmentation into a global, so that worker
