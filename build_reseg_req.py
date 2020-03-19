@@ -158,6 +158,8 @@ class PairDetector:
     not close to each other, by looking at which segments lie in
     overlapping subvolumes.
 
+    Points are returned in XYZ order.
+
     It also uses this info and some Euclidean distance transforms
     to compute the points of closest approach between pairs that
     get close enough (according to FLAGS.max_distance)
@@ -378,10 +380,8 @@ class PairDetector:
                     # Key into dictionary
                     pair = int(segid), int(other)
 
-                    # Convert local offset to global point
-                    if (approach_offset > 63).any():
-                        logging.critical("AO too big %s %s", approach_offset, subvolume.start)
-                    approach_point = subvolume.start + approach_offset
+                    # Convert local offset to global point, XYZ
+                    approach_point = subvolume.start + approach_offset[::-1]
 
                     # OK, store this approach
                     pair2approach_at_sv[pair] = approach_point, approach_dist
@@ -427,9 +427,9 @@ def main(unused_argv):
         rp = inference_pb2.ResegmentationPoint()
         rp.id_a = id_a
         rp.id_b = id_b
-        # TODO: um. does this want xyz or zyx order???
-        # `point` is an index into the array, aka zyx...
-        rp.point.z, rp.point.y, rp.point.x = point
+
+        # PairDetector gets things XYZ ordered.
+        rp.point.x, rp.point.y, rp.point.z = point
 
         # OK bai
         resegmentation_points.append(rp)
