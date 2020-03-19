@@ -703,7 +703,7 @@ class Canvas(object):
                         corner[2]:end[2]]
     elif volume.ndim == 3:
       # XXX add a new axis when data is 3d ... why now?
-      volume = volume + 0
+      volume = np.array(volume) + 0
       init_seg = volume[None,
                         corner[0]:end[0],  #
                         corner[1]:end[1],  #
