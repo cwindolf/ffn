@@ -180,9 +180,6 @@ class PairDetector:
             overlap,
             include_small_sub_boxes=True,
         )
-        logging.info("Svcalc %s", svcalc)
-        reco_bb = bounding_box.containing(*svcalc.generate_sub_boxes())
-        logging.info("Reco BB %s", reco_bb)
 
         # Store all of the (sorted) pairs that have been
         # seen together as keys in a dictionary. The values in this
@@ -382,6 +379,8 @@ class PairDetector:
                     pair = int(segid), int(other)
 
                     # Convert local offset to global point
+                    if (approach_offset > 63).any():
+                        logging.critical("AO too big %s %s", approach_offset, subvolume.start)
                     approach_point = subvolume.start + approach_offset
 
                     # OK, store this approach
