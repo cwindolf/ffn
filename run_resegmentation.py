@@ -50,23 +50,25 @@ flags.DEFINE_string(
 VOXEL_SZ = [1, 1, 1]
 
 # mpi-style script level parallelism
-flags.DEFINE_integer('rank', 0, 'My worker id.')
-flags.DEFINE_integer('nworkers', 1, 'Number of workers.')
+flags.DEFINE_integer("rank", 0, "My worker id.")
+flags.DEFINE_integer("nworkers", 1, "Number of workers.")
 
 FLAGS = flags.FLAGS
 
 
 # What's this? See:
 # github.com/janelia-flyem/neuclease/blob/master/neuclease/merge_table.py
-MERGE_TABLE_DTYPE = [('id_a', '<u8'),
-                     ('id_b', '<u8'),
-                     ('xa', '<u4'),
-                     ('ya', '<u4'),
-                     ('za', '<u4'),
-                     ('xb', '<u4'),
-                     ('yb', '<u4'),
-                     ('zb', '<u4'),
-                     ('score', '<f4')]
+MERGE_TABLE_DTYPE = [
+    ("id_a", "<u8"),
+    ("id_b", "<u8"),
+    ("xa", "<u4"),
+    ("ya", "<u4"),
+    ("za", "<u4"),
+    ("xb", "<u4"),
+    ("yb", "<u4"),
+    ("zb", "<u4"),
+    ("score", "<f4"),
+]
 
 
 def analyze_results():
@@ -92,7 +94,7 @@ def analyze_results():
         )
 
         # Analyze...
-        pair_resegmentation_result = resegmentation_analysis.evaluate_pair_resegmentation( # noqa
+        pair_resegmentation_result = resegmentation_analysis.evaluate_pair_resegmentation(  # noqa
             target_path,
         )
 
@@ -118,7 +120,6 @@ def analyze_results():
     np.save(FLAGS.affinities_npy, merge_table)
 
 
-
 def do_resegmentation():
     """Run inferences specified in a ResegmentationRequest."""
     # Configure logger
@@ -127,7 +128,7 @@ def do_resegmentation():
 
     # Get the ResegmentationRequest
     resegmentation_request = inference_pb2.ResegmentationRequest()
-    if FLAGS.resegmentation_request.endswith('txt'):
+    if FLAGS.resegmentation_request.endswith("txt"):
         logger.info("Loading resegmentation request from text format...")
         with open(FLAGS.resegmentation_request, "r") as reseg_req_f:
             text_format.Parse(reseg_req_f.read(), resegmentation_request)
@@ -159,9 +160,7 @@ def do_resegmentation():
 
     # Launch threads
     logger.info("Starting resegmentation")
-    with joblib.Parallel(
-        nthreads, prefer='threads', verbose=100
-    ) as par:
+    with joblib.Parallel(nthreads, prefer="threads", verbose=100) as par:
         for _ in par(
             joblib.delayed(resegmentation.process_point)(
                 resegmentation_request, runner, i, VOXEL_SZ
@@ -179,5 +178,5 @@ def main(unused_argv):
         do_resegmentation()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(main)
