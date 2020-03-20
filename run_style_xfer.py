@@ -1,13 +1,9 @@
 import numpy as np
-import scipy.linalg as la
 import tensorflow as tf
-from sklearn.decomposition import PCA
-from sklearn.covariance import ShrunkCovariance
-from sklearn.covariance import MinCovDet
 import preprocessing.data_util as dx
-import models
-from training import inputs
-from util import whiten
+from secgan import models
+from secgan.training import inputs
+from secgan.util import whiten
 import logging
 from absl import flags
 from absl import app

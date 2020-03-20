@@ -2,8 +2,8 @@ import os.path
 import tensorflow as tf
 from absl import app
 from absl import flags
-from training import inputs
-import models
+from secgan.training import inputs
+from secgan import models
 import logging
 
 

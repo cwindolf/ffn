@@ -1,6 +1,6 @@
 import tensorflow as tf
 from ffn.training import optimizer
-from models import convstacktools
+from secgan.models import convstacktools
 
 
 class ConvStack3DDecoder:

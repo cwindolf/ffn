@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
-import preprocessing.data_util as dx
-from models.secgan import SECGAN
+import ppx.data_util as dx
+from secgan.models import SECGAN
 
 
 def secgan_infer(unlabeled_volume_spec, output_spec, checkpoint_path):

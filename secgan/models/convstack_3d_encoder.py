@@ -1,7 +1,7 @@
 import tensorflow as tf
 from ffn.training import optimizer
 from ffn.training.models import convstack_3d
-from models import convstacktools
+from secgan.models import convstacktools
 
 
 class ConvStack3DEncoder:

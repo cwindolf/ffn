@@ -1,10 +1,10 @@
 import logging
 import numpy as np
 import tensorflow as tf
-from models import convstacktools
-from models import discriminators
-from models.convstack_3d_generator import convstack_generator
-from util import tfx
+from secgan.models import convstacktools
+from secgan.models import discriminators
+from secgan.models import convstack_generator
+from secgan.util import tfx
 from ffn.training.models import convstack_3d
 from ffn.training.optimizer import optimizer_from_flags
 

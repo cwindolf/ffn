@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from models.convstack_3d_encoder import ConvStack3DEncoder
+from secgan.models import ConvStack3DEncoder
 from ffn.training.models import convstack_3d
 
 

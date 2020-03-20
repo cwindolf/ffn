@@ -1,6 +1,6 @@
 import tensorflow as tf
-from training import inputs
-from models import convstacktools, ConvStack3DDecoder, ConvStack3DEncoder
+from secgan.training import inputs
+from secgan.models import convstacktools, ConvStack3DDecoder, ConvStack3DEncoder
 from ffn.training import model
 from ffn.training.models import convstack_3d
 

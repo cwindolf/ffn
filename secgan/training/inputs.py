@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.special import logit
 from skimage.util import view_as_windows
-import preprocessing.data_util as dx
+import ppx.data_util as dx
 import logging
 
 

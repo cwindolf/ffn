@@ -4,9 +4,9 @@ import numpy as np
 import tensorflow as tf
 from absl import app
 from absl import flags
-from training import inputs
-from models.secgan import SECGAN
-from util.fakepool import FakePool
+from secgan.training import inputs
+from secgan.models import SECGAN
+from secgan.util.fakepool import FakePool
 
 
 # ------------------------------- flags -------------------------------
