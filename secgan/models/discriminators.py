@@ -12,6 +12,7 @@ def convdisc(
     activation_fn=tf.nn.leaky_relu,
 ):
     logging.info('Build conv discriminator.')
+    logging.info(f' - Input shape: {net.shape}')
 
     conv = tf.contrib.layers.conv3d
     if norm == 'batch':
@@ -72,6 +73,7 @@ def resnet18(net, norm='instance', early_stride=2, early_maxpool=False):
     https://github.com/dalgu90/resnet-18-tensorflow/blob/master/resnet.py
     '''
     logging.info('Build ResNet-18')
+    logging.info(f' - Input shape: {net.shape}')
 
     conv = tf.contrib.layers.conv3d
     if norm == 'batch':

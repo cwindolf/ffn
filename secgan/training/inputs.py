@@ -6,7 +6,7 @@ import logging
 
 
 def fixed_seed_batch(
-    batch_size, fov_size, seed_pad, seed_init, with_init=True
+    batch_size, fov_size, seed_pad, seed_init, with_init=True, seed_logit=True
 ):
     '''A batch of "prior" seeds'''
     if isinstance(fov_size, int):
@@ -16,7 +16,12 @@ def fixed_seed_batch(
         fov_center = tuple(list(np.array(fov_size) // 2))
         fixed_seed[fov_center] = seed_init
     # logit or not ???
-    fixed_seed_batch = np.array([logit(fixed_seed)] * batch_size)[..., None]
+    if seed_logit:
+        fixed_seed_batch = np.array([logit(fixed_seed)] * batch_size)[
+            ..., None
+        ]
+    else:
+        fixed_seed_batch = np.array([fixed_seed] * batch_size)[..., None]
     return fixed_seed_batch
 
 
@@ -28,6 +33,7 @@ def random_fovs(
     image_stddev=33.0,
     permutable_axes=(0, 1, 2),
     reflectable_axes=(0, 1, 2),
+    random_state=np.random,
 ):
     '''A generator looping through batches of  random fovs in volume
 
@@ -53,11 +59,11 @@ def random_fovs(
         volume = (volume - image_mean) / image_stddev
     else:
         # Map to [-1, 1]
-        mean = volume.mean()
         logging.info(f'No image_mean passed when loading {volume_spec}')
-        logging.info(f' >>> subtracting computed mean {mean}.')
-        volume -= mean
-        volume /= 127.5
+        logging.info(f'Not preprocessing!!')
+        # Please, DIY.
+        # volume /= 127.5
+        # volume -= 1.0
 
     # Stride with fov_size to get patches
     all_fovs = view_as_windows(volume, fov_size)
@@ -76,18 +82,103 @@ def random_fovs(
         # Load
         batch = (
             all_fovs[
-                np.random.randint(fovs_per_side, size=batch_size),
-                np.random.randint(fovs_per_side, size=batch_size),
-                np.random.randint(fovs_per_side, size=batch_size),
+                random_state.randint(fovs_per_side, size=batch_size),
+                random_state.randint(fovs_per_side, size=batch_size),
+                random_state.randint(fovs_per_side, size=batch_size),
             ]
             + 0.0
         )
 
         # Augment
         if pax:
-            batch = batch.swapaxes(*np.random.choice(permutable_axes, size=2))
+            batch = batch.swapaxes(
+                *random_state.choice(permutable_axes, size=2)
+            )
         if rax:
-            batch = np.flip(batch, axis=np.random.choice(reflectable_axes))
+            batch = np.flip(batch, axis=random_state.choice(reflectable_axes))
+
+        yield batch[..., None]
+
+
+def multi_random_fovs(
+    volume_specs,
+    batch_size,
+    fov_size,
+    permutable_axes=(0, 1, 2),
+    reflectable_axes=(0, 1, 2),
+    random_state=np.random,
+):
+    '''A generator looping through batches of  random fovs in volume
+
+    This will center and scale the dataset by image_mean/stddev,
+    and apply basic augmentations.
+
+    Arguments
+    ---------
+    volume_spec : datspec pointing to 3d array
+    fov_size : array-like with three ints or one int
+        Size of fovs to extract
+    permutable_axes : tuple of pairs from (0, 1, 2)
+    reflectable_axes : sub-tuple of (0, 1, 2)
+        These define augmentations, which are run live batchwise.
+    '''
+    if isinstance(fov_size, int):
+        fov_size = (fov_size, fov_size, fov_size)
+
+    # Load / preprocess array
+    logging.info(f'multi_fovs using no!! preprocessing.')
+    volumes = []
+    for spec in volume_specs:
+        v = dx.loadspec(spec).astype(np.float32)
+        # v /= 127.5
+        # v -= 1.0
+        volumes.append(v)
+
+    # Stride with fov_size to get patches
+    all_fovs = []
+    fovs_per_side = []
+    n_fovs = []
+    for v in volumes:
+        v_fovs = view_as_windows(v, fov_size)
+        fovs_per_side.append(v_fovs.shape[0])
+        all_fovs.append(v_fovs)
+        n_fovs.append(v_fovs.shape[0] * v_fovs.shape[1] * v_fovs.shape[2])
+    tot_fovs = sum(n_fovs)
+
+    # Add 1 to augmentation axes to avoid batch dim
+    pax = bool(permutable_axes)
+    rax = bool(reflectable_axes)
+    if pax:
+        permutable_axes = np.asarray(permutable_axes) + 1
+    if rax:
+        reflectable_axes = np.asarray(reflectable_axes) + 1
+
+    # Loop to yield batches
+    while True:
+        # Weighted volume choice
+        loc = random_state.randint(tot_fovs, dtype=int)
+        for i, n in enumerate(n_fovs):
+            loc = loc - n
+            if loc <= 0:
+                break
+
+        # Load
+        batch = (
+            all_fovs[i][
+                random_state.randint(fovs_per_side[i], size=batch_size),
+                random_state.randint(fovs_per_side[i], size=batch_size),
+                random_state.randint(fovs_per_side[i], size=batch_size),
+            ]
+            + 0.0
+        )
+
+        # Augment
+        if pax:
+            batch = batch.swapaxes(
+                *random_state.choice(permutable_axes, size=2)
+            )
+        if rax:
+            batch = np.flip(batch, axis=random_state.choice(reflectable_axes))
 
         yield batch[..., None]
 
@@ -112,7 +203,7 @@ def batch_by_fovs(volume, fov_size, batch_size):
                 islice = slice(i, i + fov_size[0])
                 jslice = slice(j, j + fov_size[1])
                 subvolume = volume[
-                    islice, jslice, k:k + fov_size[2] + batch_size - 1
+                    islice, jslice, k : k + fov_size[2] + batch_size - 1
                 ]
                 subvolume_patches = view_as_windows(subvolume, fov_size)
                 # logging.info(f'subvolume: {subvolume.shape}')

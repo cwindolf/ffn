@@ -117,13 +117,22 @@ def fixed_convstack_3d(net, weights, depth=9):
 
 
 def peeping_convstack_3d(
-    net, weights=None, trainable=False, depth=9, peep_loc='top'
+    net,
+    weights=None,
+    trainable=False,
+    depth=9,
+    full_depth=12,
+    peep_loc='bottom',
+    return_end=False,
 ):
     """Copy of _predict_object_mask to peep at features.
 
     Makes a fixed net if weights are provided, otherwise a regular
     trainable one.
     """
+    build_depth = depth
+    if return_end:
+        build_depth = full_depth
 
     def initializer_kwargs(layer):
         '''Adds constant initializers when loading fixed weights.'''
@@ -157,7 +166,7 @@ def peeping_convstack_3d(
             **initializer_kwargs('conv0_b'),
         )
 
-        for i in range(1, depth):
+        for i in range(1, build_depth):
             with tf.name_scope(f'residual{i}'):
                 in_net = net
 
@@ -178,4 +187,30 @@ def peeping_convstack_3d(
                     activation_fn=None,
                     **initializer_kwargs(f'conv{i}_b'),
                 )
+
+                if i == depth - 1 and peep_loc == 'bottom':
+                    if return_end:
+                        peep = net
+                    else:
+                        return net
+
                 net += in_net
+
+    # if not return_end:
+    net = tf.nn.relu(net)
+    logits = conv(
+        net,
+        1,
+        (1, 1, 1),
+        activation_fn=None,
+        scope='conv_lom',
+        trainable=False,
+        weights_initializer=tf.constant_initializer(
+            weights[f'seed_update/conv_lom/weights']
+        ),
+        biases_initializer=tf.constant_initializer(
+            weights[f'seed_update/conv_lom/biases']
+        ),
+    )
+
+    return peep, logits
