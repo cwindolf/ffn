@@ -149,13 +149,15 @@ def do_resegmentation():
 
     # Checkpointing: let's see what points remain.
     num_points_total = len(resegmentation_request.points)
-    glob_expr = os.path.join(
+    my_glob = os.path.join(
         resegmentation_request.output_directory,
         '*/' * resegmentation_request.subdir_digits,
         '*.npz',
     )
-    logging.info("Glob was %s", glob_expr)
-    num_points_completed = len(glob.glob(glob_expr))
+    logging.info("Glob was %s", my_glob)
+    completed = list(glob.glob(my_glob))
+    print("Got %s", completed[:10])
+    num_points_completed = len(completed)
     logging.info(
         "Checking points. Total=%d, completed=%d.",
         num_points_total,
