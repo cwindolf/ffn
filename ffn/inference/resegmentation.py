@@ -77,7 +77,7 @@ def get_target_path(request, point_num):
   target_path = os.path.join(output_dir, '%d-%d_at_%d_%d_%d.npz' % (
       id_a, id_b, dp.x, dp.y, dp.z))
   if gfile.Exists(target_path):
-    logging.info('Output already exists: %s', target_path)
+    logging.debug('Output already exists: %s', target_path)
     return
 
   return target_path
