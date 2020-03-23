@@ -173,7 +173,7 @@ def do_resegmentation():
     runner = inference.Runner()
     runner.start(
         resegmentation_request.inference,
-        executor_expected_clients=len(my_points) - num_points_completed,
+        executor_expected_clients=len(my_points),
     )
 
     # Launch threads
