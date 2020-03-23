@@ -9,6 +9,7 @@ I recommend running this command inside GNU parallel like:
 
 for easy rank-based parallelism.
 """
+import glob
 import time
 import numpy as np
 import os.path
