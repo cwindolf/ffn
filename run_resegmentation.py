@@ -155,7 +155,6 @@ def do_resegmentation():
     )
     logging.debug("Glob was %s", my_glob)
     completed = list(glob.glob(my_glob))
-    print("Got %s", completed[:10])
     num_points_completed = len(completed)
     logging.info(
         "Checking points. Total=%d, completed=%d.",
@@ -170,11 +169,14 @@ def do_resegmentation():
             )
             if target_path is not None:
                 done_points.append(i)
-                if len(done_points) == num_points_completed:
+                nleft = num_points_completed - len(done_points)
+                if nleft == 0:
                     break
+                elif not nleft % 10000:
+                    logging.info("... %d remaining", num_points_completed - len(done_points))
         assert len(done_points) == num_points_completed
         # Be "atomic" haha.
-        time.sleep(10)
+        time.sleep(30)
     tbd_points = [i for i in range(num_points_total) if i not in done_points]
     num_points = len(tbd_points)
     logging.info("Recovered all %d points to be completed.", num_points)
