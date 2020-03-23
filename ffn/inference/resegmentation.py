@@ -112,6 +112,27 @@ def get_canvas(point, radius, runner):
   return runner.make_canvas(corner, subvol_size, keep_history=True)
 
 
+class DummyClient(object):
+  def __init__(self, tf_executor):
+    self.executor = tf_executor
+
+  def _register_client(self):
+    if self._exec_client_id is None:
+      self._exec_client_id = self.executor.start_client()
+      logging.info('DummyClient registered as client %d.', self._exec_client_id)
+
+  def _deregister_client(self):
+    if self._exec_client_id is not None:
+      logging.info('Deregistering dummy client %d', self._exec_client_id)
+      self.executor.finish_client(self._exec_client_id)
+      self._exec_client_id = None
+
+  def __del__(self):
+    # Note that the presence of this method will cause a memory leak in
+    # case the Canvas object is part of a reference cycle. Use weakref.proxy
+    # where such cycles are really needed.
+    self._deregister_client()
+
 def process_point(request, runner, point_num, voxel_size):
   """Runs resegmentation for a specific point.
 
@@ -124,6 +145,11 @@ def process_point(request, runner, point_num, voxel_size):
   with timer_counter(runner.counters, 'resegmentation'):
     target_path = get_target_path(request, point_num)
     if target_path is None:
+      clid = runner.executor.start_client()
+      runner.executor.finish_client(clid)
+      logging.info(
+        "Found finished point. Told the executor about it and was "
+        "client %d", clid)
       return
 
     curr = request.points[point_num]
