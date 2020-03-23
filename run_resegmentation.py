@@ -153,7 +153,7 @@ def do_resegmentation():
         resegmentation_request.output_directory,
         '*/*.npz',
     )
-    logging.info("Glob was %s", my_glob)
+    logging.debug("Glob was %s", my_glob)
     completed = list(glob.glob(my_glob))
     print("Got %s", completed[:10])
     num_points_completed = len(completed)
@@ -165,9 +165,10 @@ def do_resegmentation():
     done_points = []
     if num_points_completed:
         for i in range(num_points_total):
-            if os.path.exists(
-                resegmentation.get_target_path(resegmentation_request, i)
-            ):
+            target_path = resegmentation.get_target_path(
+                resegmentation_request, i
+            )
+            if target_path is not None:
                 done_points.append(i)
                 if len(done_points) == num_points_completed:
                     break
