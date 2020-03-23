@@ -126,6 +126,10 @@ def process_point(request, runner, point_num, voxel_size):
     if target_path is None:
       return
 
+    if os.path.exists(target_path):
+      logging.info("Skipping %s since it already exists.", target_path)
+      return
+
     curr = request.points[point_num]
     point = curr.point
     point = point.z, point.y, point.x
