@@ -147,44 +147,11 @@ def do_resegmentation():
             resegmentation_request.ParseFromString(reseg_req_f.read())
     logger.info("Done")
 
-    # Checkpointing: let's see what points remain.
-    num_points_total = len(resegmentation_request.points)
-    my_glob = os.path.join(
-        resegmentation_request.output_directory,
-        '*/*.npz',
-    )
-    logging.debug("Glob was %s", my_glob)
-    completed = list(glob.glob(my_glob))
-    num_points_completed = len(completed)
-    logging.info(
-        "Checking points. Total=%d, completed=%d.",
-        num_points_total,
-        num_points_completed,
-    )
-    done_points = []
-    if num_points_completed:
-        for i in range(num_points_total):
-            target_path = resegmentation.get_target_path(
-                resegmentation_request, i
-            )
-            if target_path is not None:
-                done_points.append(i)
-                nleft = num_points_completed - len(done_points)
-                if nleft == 0:
-                    break
-                elif not nleft % 10000:
-                    logging.info("... %d remaining", num_points_completed - len(done_points))
-        assert len(done_points) == num_points_completed
-        # Be "atomic" haha.
-        time.sleep(30)
-    tbd_points = [i for i in range(num_points_total) if i not in done_points]
-    num_points = len(tbd_points)
-    logging.info("Recovered all %d points to be completed.", num_points)
-
     # Figure out this rank's role (might be the only rank.)
     rank = FLAGS.rank
     nworkers = FLAGS.nworkers
-    my_points = tbd_points[rank::nworkers]
+    num_points_total = len(resegmentation_request.points)
+    my_points = list(range(rank, num_points_total, nworkers))
     nthreads = resegmentation_request.inference.concurrent_requests
     if FLAGS.nthreads != 0:
         logging.info(
