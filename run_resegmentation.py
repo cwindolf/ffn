@@ -151,8 +151,7 @@ def do_resegmentation():
     num_points_total = len(resegmentation_request.points)
     my_glob = os.path.join(
         resegmentation_request.output_directory,
-        '*/' * resegmentation_request.subdir_digits,
-        '*.npz',
+        '*/*.npz',
     )
     logging.info("Glob was %s", my_glob)
     completed = list(glob.glob(my_glob))
@@ -177,7 +176,7 @@ def do_resegmentation():
         time.sleep(10)
     tbd_points = [i for i in range(num_points_total) if i not in done_points]
     num_points = len(tbd_points)
-    logging.info("Recovered all %d points to be completed.")
+    logging.info("Recovered all %d points to be completed.", num_points)
 
     # Figure out this rank's role (might be the only rank.)
     rank = FLAGS.rank
