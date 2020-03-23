@@ -44,6 +44,14 @@ flags.DEFINE_string(
     ".npy path in the neuclease merge table format.",
 )
 
+flags.DEFINE_integer(
+    "nthreads",
+    0,
+    "If set, overrides the `concurrent_requests` field set in the proto."
+    "Special values: 0 says use proto's value, -1 says ncpus - 1, else "
+    "interpreted literally."
+)
+
 # This is used by resegmentation during EDT to specify
 # anisotropy of the metric. Our voxels are isotropic so
 # not worried about setting this to physical units.
@@ -139,9 +147,18 @@ def do_resegmentation():
     logger.info("Done")
 
     # Figure out this rank's role (might be the only rank.)
+    rank = FLAGS.rank
+    nworkers = FLAGS.nworkers
     num_points = len(resegmentation_request.points)
     my_points = list(range(rank, num_points, nworkers))
     nthreads = resegmentation_request.inference.concurrent_requests
+    if FLAGS.nthreads != 0:
+        logging.info(
+            "Overriding number of threads set in proto. Was %d, now %d.",
+            resegmentation_request.inference.concurrent_requests,
+            FLAGS.nthreads,
+        )
+        nthreads = FLAGS.nthreads
 
     logger.info("%d points to process on %d ranks", num_points, nworkers)
     logger.info(
