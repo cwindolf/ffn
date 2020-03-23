@@ -161,7 +161,7 @@ def do_resegmentation():
         )
         nthreads = FLAGS.nthreads
 
-    logger.info("%d points to process on %d ranks", num_points, nworkers)
+    logger.info("%d points to process on %d ranks", num_points_total, nworkers)
     logger.info(
         "rank %d processing %d points on %d threads",
         rank,
