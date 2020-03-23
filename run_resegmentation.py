@@ -9,7 +9,7 @@ I recommend running this command inside GNU parallel like:
 
 for easy rank-based parallelism.
 """
-
+import time
 import numpy as np
 import os.path
 import logging
@@ -146,11 +146,40 @@ def do_resegmentation():
             resegmentation_request.ParseFromString(reseg_req_f.read())
     logger.info("Done")
 
+    # Checkpointing: let's see what points remain.
+    num_points_total = len(resegmentation_request.points)
+    glob_expr = os.path.join(
+        resegmentation_request.output_directory,
+        '*/' * resegmentation_request.subdir_digits,
+        '*.npz',
+    )
+    logging.info("Glob was %s", glob_expr)
+    num_points_completed = len(glob.glob(glob_expr))
+    logging.info(
+        "Checking points. Total=%d, completed=%d.",
+        num_points_total,
+        num_points_completed,
+    )
+    done_points = []
+    if num_points_completed:
+        for i in range(num_points_total):
+            if os.path.exists(
+                resegmentation.get_target_path(resegmentation_request, i)
+            ):
+                done_points.append(i)
+                if len(done_points) == num_points_completed:
+                    break
+        assert len(done_points) == num_points_completed
+        # Be "atomic" haha.
+        time.sleep(10)
+    tbd_points = [i for i in range(num_points_total) if i not in done_points]
+    num_points = len(tbd_points)
+    logging.info("Recovered all %d points to be completed.")
+
     # Figure out this rank's role (might be the only rank.)
     rank = FLAGS.rank
     nworkers = FLAGS.nworkers
-    num_points = len(resegmentation_request.points)
-    my_points = list(range(rank, num_points, nworkers))
+    my_points = tbd_points[rank::nworkers]
     nthreads = resegmentation_request.inference.concurrent_requests
     if FLAGS.nthreads != 0:
         logging.info(
