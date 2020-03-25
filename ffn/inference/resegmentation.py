@@ -31,6 +31,14 @@ import numpy as np
 from scipy import ndimage
 from scipy.special import expit
 
+try:
+  import edt
+
+  def dtedt(a, sampling=None):
+    return edt.edt(a, anisotropy=sampling)
+except ModuleNotFoundError:
+  dtedt = ndimage.distance_transform_edt
+
 from tensorflow import gfile
 
 from . import storage
@@ -111,27 +119,6 @@ def get_canvas(point, radius, runner):
 
   return runner.make_canvas(corner, subvol_size, keep_history=True)
 
-
-class DummyClient(object):
-  def __init__(self, tf_executor):
-    self.executor = tf_executor
-
-  def _register_client(self):
-    if self._exec_client_id is None:
-      self._exec_client_id = self.executor.start_client()
-      logging.info('DummyClient registered as client %d.', self._exec_client_id)
-
-  def _deregister_client(self):
-    if self._exec_client_id is not None:
-      logging.info('Deregistering dummy client %d', self._exec_client_id)
-      self.executor.finish_client(self._exec_client_id)
-      self._exec_client_id = None
-
-  def __del__(self):
-    # Note that the presence of this method will cause a memory leak in
-    # case the Canvas object is part of a reference cycle. Use weakref.proxy
-    # where such cycles are really needed.
-    self._deregister_client()
 
 def process_point(request, runner, point_num, voxel_size):
   """Runs resegmentation for a specific point.
@@ -235,7 +222,7 @@ def process_point(request, runner, point_num, voxel_size):
       logging.info('processing object %d', i)
 
       with timer_counter(canvas.counters, 'edt'):
-        dists = ndimage.distance_transform_edt(seg, sampling=voxel_size)
+        dists = dtedt(seg, sampling=voxel_size)
         # Do not seed where not enough context is available.
         dists[:canvas.margin[0], :, :] = 0
         dists[:, :canvas.margin[1], :] = 0
@@ -329,4 +316,3 @@ def process(request, runner, voxel_size):
     logging.info('processing %d/%d', i, num_points)
     process_point(request, runner, i, voxel_size)
     logging.info('finished %d/%d', i, num_points)
-
