@@ -57,7 +57,7 @@ def get_starting_location(dists, exclusion_radius):
   return z, y, x
 
 
-def get_target_path(request, point_num):
+def get_target_path(request, point_num, return_early=True):
   """Computes the output path for a specific point.
 
   Args:
@@ -84,7 +84,7 @@ def get_target_path(request, point_num):
   dp = request.points[point_num].point
   target_path = os.path.join(output_dir, '%d-%d_at_%d_%d_%d.npz' % (
       id_a, id_b, dp.x, dp.y, dp.z))
-  if gfile.Exists(target_path):
+  if return_early and gfile.Exists(target_path):
     logging.debug('Output already exists: %s', target_path)
     return
 
