@@ -120,8 +120,7 @@ def analyze_results():
         resegmentation_request.analysis_radius
     )[::-1]
 
-    results = []
-    for i in range(npoints):
+    def analyze_point(i):
         # Get output path for this point
         target_path = resegmentation.get_target_path(
             resegmentation_request, i, return_early=False
@@ -139,7 +138,15 @@ def analyze_results():
             VOXEL_SZ,
         )
 
-        results.append(pair_resegmentation_result)
+        return pair_resegmentation_result
+
+    results = []
+    nthreads = -1 if FLAGS.nthreads == 0 else FLAGS.nthreads
+    with joblib.Parallel(nthreads, require="sharedmem", verbose=100) as par:
+        for result in par(
+            joblib.delayed(analyze_point)(i) for i in range(npoints)
+        ):
+            results.append(result)
 
     # Build merge table for neuclease
     merge_table = [
