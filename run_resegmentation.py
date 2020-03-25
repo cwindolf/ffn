@@ -119,7 +119,8 @@ def analyze_results():
     ) = resegmentation_request.inference.init_segmentation.hdf5.split(":")
     init_segmentation = h5py.File(path, "r")[dataset]
     if FLAGS.bigmem:
-        init_segmentation = np.array(init_segmentation)
+        logger.info("Loading segmentation into memory, since you asked.")
+        init_segmentation = init_segmentation[:]
 
     # Other params
     reseg_radius = geom_utils.ToNumpy3Vector(resegmentation_request.radius)[
