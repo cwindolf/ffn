@@ -232,7 +232,7 @@ def evaluate_pair_resegmentation(filename, seg_volume,
   else:
       seg = seg_volume[(z - analysis_r[0]):(z + analysis_r[0] + 1),
                        (y - analysis_r[1]):(y + analysis_r[1] + 1),
-                       (x - analysis_r[2]):(x + analysis_r[2] + 1)][0, ...]
+                       (x - analysis_r[2]):(x + analysis_r[2] + 1)]
   seg1 = seg == id1
   seg2 = seg == id2
   result.eval.num_voxels_a = int(np.sum(seg1))
