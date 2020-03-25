@@ -106,11 +106,19 @@ def analyze_results():
     npoints = len(resegmentation_request.points)
 
     # Load up seg volume
-    path, dataset = resegmentation_request.inference.init_segmentation.hdf5.split(':')
+    (
+        path,
+        dataset,
+    ) = resegmentation_request.inference.init_segmentation.hdf5.split(":")
     init_segmentation = h5py.File(path)[dataset]
 
     # Other params
-    radius = geom_utils.ToNumpy3Vector(resegmentation_request.radius)[::-1]
+    reseg_radius = geom_utils.ToNumpy3Vector(resegmentation_request.radius)[
+        ::-1
+    ]
+    analysis_radius = geom_utils.ToNumpy3Vector(
+        resegmentation_request.analysis_radius
+    )[::-1]
 
     results = []
     for i in range(npoints):
@@ -122,7 +130,11 @@ def analyze_results():
 
         # Analyze...
         pair_resegmentation_result = resegmentation_analysis.evaluate_pair_resegmentation(
-            target_path, init_segmentation, radius, VOXEL_SZ
+            target_path,
+            init_segmentation,
+            reseg_radius,
+            analysis_radius,
+            VOXEL_SZ,
         )
 
         results.append(pair_resegmentation_result)
