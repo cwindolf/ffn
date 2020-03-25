@@ -9,8 +9,6 @@ I recommend running this command inside GNU parallel like:
 
 for easy rank-based parallelism.
 """
-import glob
-import time
 import numpy as np
 import os.path
 import logging
@@ -79,6 +77,18 @@ MERGE_TABLE_DTYPE = [
     ("score", "<f4"),
 ]
 
+def get_resegmentation_request():
+    resegmentation_request = inference_pb2.ResegmentationRequest()
+    if FLAGS.resegmentation_request.endswith("txt"):
+        logging.info("Loading resegmentation request from text format...")
+        with open(FLAGS.resegmentation_request, "r") as reseg_req_f:
+            text_format.Parse(reseg_req_f.read(), resegmentation_request)
+    else:
+        logging.info("Loading resegmentation request from binary format...")
+        with open(FLAGS.resegmentation_request, "rb") as reseg_req_f:
+            resegmentation_request.ParseFromString(reseg_req_f.read())
+    return resegmentation_request
+
 
 def analyze_results():
     """Produce affinities from completed ResegmentationRequest."""
@@ -89,10 +99,7 @@ def analyze_results():
     assert not os.path.exists(FLAGS.affinities_npy)
 
     # Get the ResegmentationRequest
-    resegmentation_request = inference_pb2.ResegmentationRequest()
-    with open(FLAGS.resegmentation_request, "r") as reseg_req_f:
-        text_format.Parse(reseg_req_f.read(), resegmentation_request)
-    npoints = len(resegmentation_request.points)
+    resegmentation_request = get_resegmentation_request()
 
     results = []
     for i in range(npoints):
@@ -136,16 +143,7 @@ def do_resegmentation():
     logger = logging.getLogger(f"[reseg rank{FLAGS.rank}]")
 
     # Get the ResegmentationRequest
-    resegmentation_request = inference_pb2.ResegmentationRequest()
-    if FLAGS.resegmentation_request.endswith("txt"):
-        logger.info("Loading resegmentation request from text format...")
-        with open(FLAGS.resegmentation_request, "r") as reseg_req_f:
-            text_format.Parse(reseg_req_f.read(), resegmentation_request)
-    else:
-        logger.info("Loading resegmentation request from binary format...")
-        with open(FLAGS.resegmentation_request, "rb") as reseg_req_f:
-            resegmentation_request.ParseFromString(reseg_req_f.read())
-    logger.info("Done")
+    resegmentation_request = get_resegmentation_request()
 
     # Figure out this rank's role (might be the only rank.)
     rank = FLAGS.rank
