@@ -195,7 +195,7 @@ def evaluate_pair_resegmentation(filename, seg_volume,
   sr.z, sr.y, sr.x = resegmentation_radius
 
   with gfile.Open(filename, 'rb') as f:
-    data = np.load(f)
+    data = np.load(f, allow_pickle=True)
     prob = storage.dequantize_probability(data['probs'])
     prob = np.nan_to_num(prob)  # nans indicate unvisited voxels
     dels = data['deletes']
