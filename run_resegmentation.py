@@ -12,12 +12,14 @@ for easy rank-based parallelism.
 import numpy as np
 import os.path
 import logging
+import h5py
 
 from google.protobuf import text_format
 from ffn.inference import inference_pb2
 from ffn.inference import inference
 from ffn.inference import resegmentation
 from ffn.inference import resegmentation_analysis
+from utils import geom_utils
 
 import joblib
 
@@ -48,7 +50,7 @@ flags.DEFINE_integer(
     0,
     "If set, overrides the `concurrent_requests` field set in the proto."
     "Special values: 0 says use proto's value, -1 says ncpus - 1, else "
-    "interpreted literally."
+    "interpreted literally.",
 )
 
 # This is used by resegmentation during EDT to specify
@@ -77,6 +79,7 @@ MERGE_TABLE_DTYPE = [
     ("score", "<f4"),
 ]
 
+
 def get_resegmentation_request():
     resegmentation_request = inference_pb2.ResegmentationRequest()
     if FLAGS.resegmentation_request.endswith("txt"):
@@ -102,6 +105,13 @@ def analyze_results():
     resegmentation_request = get_resegmentation_request()
     npoints = len(resegmentation_request.points)
 
+    # Load up seg volume
+    path, dataset = resegmentation_request.inference.init_segmentation.split(':')
+    init_segmentation = h5py.File(path)[dataset]
+
+    # Other params
+    radius = geom_utils.ToNumpy3Vector(resegmentation_request.radius)[::-1]
+
     results = []
     for i in range(npoints):
         # Get output path for this point
@@ -111,8 +121,8 @@ def analyze_results():
         )
 
         # Analyze...
-        pair_resegmentation_result = resegmentation_analysis.evaluate_pair_resegmentation(  # noqa
-            target_path,
+        pair_resegmentation_result = resegmentation_analysis.evaluate_pair_resegmentation(
+            target_path, init_segmentation, radius, VOXEL_SZ
         )
 
         results.append(pair_resegmentation_result)
