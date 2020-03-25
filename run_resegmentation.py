@@ -19,7 +19,7 @@ from ffn.inference import inference_pb2
 from ffn.inference import inference
 from ffn.inference import resegmentation
 from ffn.inference import resegmentation_analysis
-from utils import geom_utils
+from ffn.utils import geom_utils
 
 import joblib
 
