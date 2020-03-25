@@ -117,7 +117,7 @@ def analyze_results():
         path,
         dataset,
     ) = resegmentation_request.inference.init_segmentation.hdf5.split(":")
-    init_segmentation = h5py.File(path)[dataset]
+    init_segmentation = h5py.File(path, "r")[dataset]
     if FLAGS.bigmem:
         init_segmentation = np.array(init_segmentation)
 
