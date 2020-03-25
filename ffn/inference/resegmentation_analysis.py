@@ -224,10 +224,15 @@ def evaluate_pair_resegmentation(filename, seg_volume,
   r = result.eval.radius
   r.z, r.y, r.x = analysis_r
 
-  seg = seg_volume[0,
-                   (z - analysis_r[0]):(z + analysis_r[0] + 1),
-                   (y - analysis_r[1]):(y + analysis_r[1] + 1),
-                   (x - analysis_r[2]):(x + analysis_r[2] + 1)][0, ...]
+  if seg_volume.ndim == 4:
+      seg = seg_volume[0,
+                       (z - analysis_r[0]):(z + analysis_r[0] + 1),
+                       (y - analysis_r[1]):(y + analysis_r[1] + 1),
+                       (x - analysis_r[2]):(x + analysis_r[2] + 1)][0, ...]
+  else:
+      seg = seg_volume[(z - analysis_r[0]):(z + analysis_r[0] + 1),
+                       (y - analysis_r[1]):(y + analysis_r[1] + 1),
+                       (x - analysis_r[2]):(x + analysis_r[2] + 1)][0, ...]
   seg1 = seg == id1
   seg2 = seg == id2
   result.eval.num_voxels_a = int(np.sum(seg1))
