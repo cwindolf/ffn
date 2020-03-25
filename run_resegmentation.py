@@ -62,6 +62,12 @@ VOXEL_SZ = [1, 1, 1]
 flags.DEFINE_integer("rank", 0, "My worker id.")
 flags.DEFINE_integer("nworkers", 1, "Number of workers.")
 
+flags.DEFINE_boolean(
+    "bigmem",
+    False,
+    "Load seg into memory during analysis.",
+)
+
 FLAGS = flags.FLAGS
 
 
@@ -99,6 +105,7 @@ def analyze_results():
     logging.basicConfig(level=logging.DEBUG)
     logger = logging.getLogger("affinities")
 
+    assert bool(FLAGS.affinities_npy)
     assert not os.path.exists(FLAGS.affinities_npy)
 
     # Get the ResegmentationRequest
@@ -111,6 +118,8 @@ def analyze_results():
         dataset,
     ) = resegmentation_request.inference.init_segmentation.hdf5.split(":")
     init_segmentation = h5py.File(path)[dataset]
+    if FLAGS.bigmem:
+        init_segmentation = np.array(init_segmentation)
 
     # Other params
     reseg_radius = geom_utils.ToNumpy3Vector(resegmentation_request.radius)[
