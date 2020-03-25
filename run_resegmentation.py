@@ -106,7 +106,7 @@ def analyze_results():
     npoints = len(resegmentation_request.points)
 
     # Load up seg volume
-    path, dataset = resegmentation_request.inference.init_segmentation.split(':')
+    path, dataset = resegmentation_request.inference.init_segmentation.hdf5.split(':')
     init_segmentation = h5py.File(path)[dataset]
 
     # Other params
