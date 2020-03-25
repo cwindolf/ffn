@@ -102,7 +102,7 @@ def analyze_results():
     resegmentation_request = get_resegmentation_request()
 
     results = []
-    for i in range(npoints):
+    for i in range(len(resegmentation_request.points)):
         # Get output path for this point
         target_path = resegmentation.get_target_path(resegmentation_request, i)
         logger.info(
