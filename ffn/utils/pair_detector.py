@@ -55,7 +55,14 @@ class PairDetector:
 
     BUCKET_SIZE = 64
 
-    def __init__(self, init_segmentation_spec, bbox, nthreads, max_distance=2.0, bigmem=False):
+    def __init__(
+        self,
+        init_segmentation_spec,
+        bbox,
+        nthreads,
+        max_distance=2.0,
+        bigmem=False,
+    ):
         """Constructor finds the requested pairs.
         Warning, it looks at the FLAGS.
         """
