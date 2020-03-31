@@ -74,22 +74,21 @@ def analyze_results(reseg_req_path, affinities_npy, bigmem, nthreads):
     npoints = len(resegmentation_request.points)
 
     # Load up seg volume
-    (
-        path,
-        dataset,
-    ) = resegmentation_request.inference.init_segmentation.hdf5.split(":")
+    init_seg_path = resegmentation_request.inference.init_segmentation.hdf5
+    path, dataset = init_seg_path.split(":")
     init_segmentation = h5py.File(path, "r")[dataset]
     if bigmem:
         logger.info("Loading segmentation into memory, since you asked.")
         init_segmentation = init_segmentation[:]
 
     # Other params
-    reseg_radius = geom_utils.ToNumpy3Vector(resegmentation_request.radius)[
-        ::-1
-    ]
+    reseg_radius = geom_utils.ToNumpy3Vector(resegmentation_request.radius)
     analysis_radius = geom_utils.ToNumpy3Vector(
         resegmentation_request.analysis_radius
-    )[::-1]
+    )
+    # These are XYZ in the proto, but we need ZYX.
+    reseg_radius = reseg_radius[::-1]
+    analysis_radius = analysis_radius[::-1]
 
     def analyze_point(i):
         # Get output path for this point
