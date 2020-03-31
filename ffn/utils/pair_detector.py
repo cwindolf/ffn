@@ -1,3 +1,30 @@
+"""
+QUOTH bioRxiv FFN paper:
+
+To determine whether a pair of segments in spatial proximity are part
+of the same neurite, we extracted a small subvolume (about 1 cubic
+micron in size) around the point of their closest approach. We then
+placed seeds in parts of the two objects inside the subvolume, at
+locations maximally distant from object boundaries, and performed two
+independent FFN inference runs, one for each of these seeds, while
+keeping the remaining objects fixed. [... then some logic about merging
+which is not relevant here]
+
+So what points should the pair detector output: the "point of their closest
+approach", or the seeds in the subvolume extracted around that point?
+To understand this, look at `resegmentation.py`, which will be our
+method for running resegmentation. Specifically the function
+`process_point`, which has most of the logic. We can see that this
+function extracts a volume around the ResegmentationPoint, does some
+fancy EDT, and uses the result of that to get some points
+(the line with the call to `get_starting_location`), which it then
+passes to its `canvas.segment_at(...)`.
+
+>> So, we conclude that the ResegmentationPoint is the point of
+   closest approach. The solemn duty of this class is to determine
+   these points.
+"""
+
 import logging
 import multiprocessing.pool
 import numpy as np
