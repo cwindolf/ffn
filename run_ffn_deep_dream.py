@@ -67,6 +67,7 @@ if __name__ == "__main__":
         "--depth", type=int, default=12, help="Number of FFN layers."
     )
 
+    ap.add_argument("--it-between", type=int, default=50000)
     ap.add_argument("--neuron-radius", type=int, default=4)
     ap.add_argument("--blur-radius", type=int, default=0.5)
 
@@ -148,9 +149,10 @@ if __name__ == "__main__":
                 dd = sess.run(dd_slice)
                 plt.imshow(dd, cmap='gray')
                 plt.show(block=True)
-                for i in range(100):
-                    if not i % 10:
-                        print('.', end='', flush=True)
+                for i in range(args.it_between):
+                    if not i % (args.it_between // 100):
+                        l_ = sess.run(loss)
+                        print(f"{i} {l_}", flush=True)
                     _ = sess.run(dd_op)
                 print('\a')
                 print("Once again...")
