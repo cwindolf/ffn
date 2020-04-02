@@ -125,7 +125,6 @@ if __name__ == "__main__":
                 scale=0.1, size=(1, *bluron.shape, 1)
             )
         )
-        init_op = tf.variables_initializer([dd_image])
         mask = tf.constant(bluron[None, ..., None])
         net = tf.concat([dd_image, mask], axis=4)
         logits = convstacktools.fixed_convstack_3d(
@@ -137,13 +136,16 @@ if __name__ == "__main__":
         opt = tf.train.AdamOptimizer()
         dd_op = opt.minimize(loss, var_list=[dd_image])
         dd_slice = dd_image[0, args.d // 2, :, :, 0]
-
+        init_op = tf.group(
+            tf.variables_initializer([dd_image]),
+            tf.local_variables_initializer(),
+        )
         # deep dream loop
         with tf.Session() as sess:
             sess.run(init_op)
             while True:
                 dd = sess.run(dd_slice)
-                plt.imshow(dd)
+                plt.imshow(dd, cmap='gray')
                 plt.show(block=True)
                 for _ in range(10):
                     _ = sess.run(dd_op)
