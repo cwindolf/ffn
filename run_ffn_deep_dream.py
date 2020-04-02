@@ -123,7 +123,7 @@ if __name__ == "__main__":
         dd_image = tf.Variable(
             initial_value=np.random.normal(
                 scale=0.1, size=(1, *bluron.shape, 1)
-            )
+            ).astype(np.float32)
         )
         mask = tf.constant(bluron[None, ..., None])
         net = tf.concat([dd_image, mask], axis=4)
