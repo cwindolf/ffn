@@ -111,7 +111,7 @@ if __name__ == "__main__":
         trainable_names = [v.op.name for v in tf.trainable_variables()]
 
         with tf.Session(graph=ffn_loading_graph) as sess:
-            ffn.saver.restore(sess, args.ffn_ckpt)
+            ffn.saver.restore(sess, args.ckpt)
             weights = dict(
                 zip(trainable_names, sess.run(tf.trainable_variables()))
             )
