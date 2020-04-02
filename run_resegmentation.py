@@ -302,6 +302,14 @@ def analyze_results(reseg_req_path, affinities_npy, bigmem, nthreads):
     np.save(affinities_npy, merge_table)
 
 
+# ------------------ step 3: post an automatic merge ------------------
+
+
+def post_automerge(affinities_npy, threshold):
+    merge_table = np.load(affinities_npy)
+    assert merge_table.dtype == MERGE_TABLE_DTYPE
+
+
 # ------------------------------- main --------------------------------
 if __name__ == "__main__":
     # ----------------------------- args ------------------------------
@@ -406,6 +414,17 @@ if __name__ == "__main__":
         "--bigmem", action="store_true", help="Load whole seg into mem."
     )
 
+    # Step 3: Post automerge to DVID ----------------------------------
+    post_p = sp.add_parser(
+        "post_automerge",
+        help="Use the merge table from the last step to decide on an "
+        "automated merge, and post that to DVID.",
+    )
+    post_p.add_argument("--affinities_npy", help="Merge table from step 2.")
+    post_p.add_argument(
+        "--threshold", type=float, help="Automatic merge threshold."
+    )
+
     args = ap.parse_args()
 
     # ------------------------- run the task --------------------------
@@ -443,3 +462,5 @@ if __name__ == "__main__":
             args.bigmem,
             args.nthreads,
         )
+    elif args.task == "post_automerge":
+        post_automerge(args.affinities_npy, args.threshold)

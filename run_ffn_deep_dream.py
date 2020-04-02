@@ -126,7 +126,7 @@ if __name__ == "__main__":
             )
         )
         mask = tf.constant(bluron[None, ..., None])
-        net = tf.concat([dd_image, mask], axis=0)
+        net = tf.concat([dd_image, mask], axis=4)
         logits = convstacktools.fixed_convstack_3d(
             net, weights, depth=args.depth
         )
