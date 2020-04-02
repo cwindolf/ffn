@@ -125,6 +125,7 @@ if __name__ == "__main__":
                 scale=0.1, size=(1, *bluron.shape, 1)
             )
         )
+        init_op = tf.variables_initializer([dd_image])
         mask = tf.constant(bluron[None, ..., None])
         net = tf.concat([dd_image, mask], axis=4)
         logits = convstacktools.fixed_convstack_3d(
@@ -139,6 +140,7 @@ if __name__ == "__main__":
 
         # deep dream loop
         with tf.Session() as sess:
+            sess.run(init_op)
             while True:
                 dd = sess.run(dd_slice)
                 plt.imshow(dd)
