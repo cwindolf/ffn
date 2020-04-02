@@ -148,5 +148,7 @@ if __name__ == "__main__":
                 dd = sess.run(dd_slice)
                 plt.imshow(dd, cmap='gray')
                 plt.show(block=True)
-                for _ in range(10):
+                for _ in range(1000):
                     _ = sess.run(dd_op)
+                print('\a')
+                print("Once again...")
