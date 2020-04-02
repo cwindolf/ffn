@@ -82,7 +82,7 @@ if __name__ == "__main__":
     neuron = morpho.binary_dilation(
         skeleton, selem=morpho.ball(args.neuron_radius)
     )
-    bluron = gaussian(neuron, sigma=args.blur_radius)
+    bluron = gaussian(neuron, sigma=args.blur_radius).astype(np.float32)
 
     # Show what we got
     plt.imshow(bluron[args.d // 2], cmap="gray")
@@ -120,38 +120,37 @@ if __name__ == "__main__":
 
     # Instead of using FFN, make a fixed version of the FFN graph
     with tf.Graph().as_default():
-        with tf.device("gpu"):
-            dd_image = tf.Variable(
-                initial_value=np.random.normal(
-                    scale=0.1, size=(1, *bluron.shape, 1)
-                )
+        dd_image = tf.Variable(
+            initial_value=np.random.normal(
+                scale=0.1, size=(1, *bluron.shape, 1)
             )
-            mask = tf.constant(bluron[None, ..., None])
-            net = tf.concat([dd_image, mask], axis=4)
-            logits = convstacktools.fixed_convstack_3d(
-                net, weights, depth=args.depth
-            )
-            loss = tf.reduce_mean(
-                tf.nn.sigmoid_cross_entropy_with_logits(logits=logits, labels=mask)
-            )
-            opt = tf.train.AdamOptimizer()
-            dd_op = opt.minimize(loss, var_list=[dd_image])
-            dd_slice = dd_image[0, args.d // 2, :, :, 0]
-            init_op = tf.group(
-                tf.variables_initializer([dd_image]),
-                tf.local_variables_initializer(),
-                tf.global_variables_initializer(),
-            )
-            # deep dream loop
-            with tf.Session() as sess:
-                sess.run(init_op)
-                while True:
-                    dd = sess.run(dd_slice)
-                    plt.imshow(dd, cmap='gray')
-                    plt.show(block=True)
-                    for i in range(100):
-                        if not i % 10:
-                            print('.', end='', flush=True)
-                        _ = sess.run(dd_op)
-                    print('\a')
-                    print("Once again...")
+        )
+        mask = tf.constant(bluron[None, ..., None])
+        net = tf.concat([dd_image, mask], axis=4)
+        logits = convstacktools.fixed_convstack_3d(
+            net, weights, depth=args.depth
+        )
+        loss = tf.reduce_mean(
+            tf.nn.sigmoid_cross_entropy_with_logits(logits=logits, labels=mask)
+        )
+        opt = tf.train.AdamOptimizer()
+        dd_op = opt.minimize(loss, var_list=[dd_image])
+        dd_slice = dd_image[0, args.d // 2, :, :, 0]
+        init_op = tf.group(
+            tf.variables_initializer([dd_image]),
+            tf.local_variables_initializer(),
+            tf.global_variables_initializer(),
+        )
+        # deep dream loop
+        with tf.Session() as sess:
+            sess.run(init_op)
+            while True:
+                dd = sess.run(dd_slice)
+                plt.imshow(dd, cmap='gray')
+                plt.show(block=True)
+                for i in range(100):
+                    if not i % 10:
+                        print('.', end='', flush=True)
+                    _ = sess.run(dd_op)
+                print('\a')
+                print("Once again...")
