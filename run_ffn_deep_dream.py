@@ -139,6 +139,7 @@ if __name__ == "__main__":
         init_op = tf.group(
             tf.variables_initializer([dd_image]),
             tf.local_variables_initializer(),
+            tf.global_variables_initializer(),
         )
         # deep dream loop
         with tf.Session() as sess:
