@@ -210,7 +210,9 @@ def main(_):
     assert all(os.path.isdir(sd) for sd in segdirs)
 
     # Subvolumes ------------------------------------------------------
-    allsvs_ = [get_subvolumes(sd) for sd in segdirs]
+    ncpu = multiprocessing.cpu_count()
+    with multiprocessing.pool.ThreadPool(ncpu) as pool:
+        allsvs_ = list(pool.map(get_subvolumes, segdirs))
     allsvs = allsvs_[0]
 
     # Check all the same
@@ -293,7 +295,6 @@ def main(_):
         seg_outf.swmr_mode = True
 
         # Make an appropriately sized process pool
-        ncpu = multiprocessing.cpu_count()
         nthreads = min(max(map(len, tiers)), ncpu)
 
         # XXX The SWMR thing only seems to work with threads. It
