@@ -404,13 +404,15 @@ def post_automerge(
         merges = list(
             list(sorted(cc)) for cc in nx.connected_components(nx.Graph(edges))
         )
+        csizes = list(map(len, merges))
 
     # Log stats
     print(
         f"Agglomeration merged {nmergedsvs} out of {nsvs} original "
         f"supervoxels into {len(merges)} neurites. That means the new "
-        f"neurites have an average of {len(merges) / nmergedsvs:3g} svs,"
-        f"and stddev of {np.std(list(map(len, merges)))} svs."
+        f"neurites have an average of {len(merges) / nmergedsvs:3g} svs, "
+        f"and stddev of {np.std(csizes)} svs. Smallest and "
+        f"largest had sizes {min(csizes)}, {max(csizes)}."
     )
     assert all(sv in merge_svids for merge in merges for sv in merge)
 
