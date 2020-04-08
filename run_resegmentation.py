@@ -448,7 +448,7 @@ def post_automerge(
         merges = list(
             list(sorted(cc)) for cc in nx.connected_components(nx.Graph(edges))
         )
-        csizes = list(map(len, merges))
+        csizes = np.array(list(map(len, merges)))
 
     # Log stats
     print(
