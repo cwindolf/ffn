@@ -604,11 +604,11 @@ if __name__ == "__main__":
         description="Not to harp on this, but like, don't use a repo that has "
         "been traced, this will destroy the work.",
     )
-    post_p.add_argument(
+    post_dvid_g.add_argument(
         "--repo",
         help="UUID of DVID repo whose labels and mappings we will overwrite.",
     )
-    post_p.add_argument(
+    post_dvid_g.add_argument(
         "--dvid",
         default="",
         help="<host>:<port>. If environment variable DVIDHOST is set, we will "
@@ -657,11 +657,12 @@ if __name__ == "__main__":
     elif args.task == "post_automerge":
         # Munge DVID host
         dvid_host = args.dvid
-        if not dvid_host and "DVIDHOST" in os.environ:
+        if not dvid_host and ("DVIDHOST" in os.environ):
             port = os.environ.get("DVIDPORT", 8000)
             dvid_host = f"{os.environ['DVIDHOST']}:{port}"
-        else:
-            raise ValueError(f"Bad dvid host {dvid_host}.")
+        elif not dvid_host:
+            raise ValueError("Please pass --dvid or set DVIDHOST.")
+
         post_automerge(
             args.affinities_npy,
             args.threshold,
