@@ -466,11 +466,11 @@ def post_automerge(
     # Get the old index for svids who are gonna change
     # Do this by hitting GET .../indices with batches of svids
     batch_i = 0
-    nbatch = len(merges) // indices_batch_sz
+    nbatch = len(merge_svids) // indices_batch_sz
     with timer("Downloaded all label indices, and slept a lot."):
         plis = {}
         for i in range(0, len(merge_svids), indices_batch_sz):
-            time.sleep(5.0)
+            time.sleep(0.25)
             svid_batch = merge_svids[i : i + indices_batch_sz]
             with timer(f"Downloaded label index batch {batch_i} / {nbatch}."):
                 for pli in neuclease.dvid.fetch_labelindices(
@@ -483,6 +483,7 @@ def post_automerge(
     the_time = datetime.datetime.now().isoformat()
     li_proto_batch = []
     batch_i = 0
+    nbatch = len(merges) // indices_batch_sz
     with timer("Posted all merged label indices."):
         for merge in merges:
             merge_pli_blocks = pd.concat(
