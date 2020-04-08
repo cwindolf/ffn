@@ -410,7 +410,7 @@ def post_automerge(
     print(
         f"Agglomeration merged {nmergedsvs} out of {nsvs} original "
         f"supervoxels into {len(merges)} neurites. That means the new "
-        f"neurites have an average of {len(merges) / nmergedsvs:3g} svs, "
+        f"neurites have an average of {nmergedsvs / len(merges):3g} svs, "
         f"and stddev of {np.std(csizes)} svs. Smallest and "
         f"largest had sizes {min(csizes)}, {max(csizes)}."
     )
@@ -421,7 +421,7 @@ def post_automerge(
     # Do this by hitting GET .../indices with batches of svids
     batch_i = 0
     nbatch = len(merges) // indices_batch_sz
-    with timer("Downloaded all label indices."):
+    with timer("Downloaded all label indices, and slept a lot."):
         plis = {}
         for i in range(0, len(merge_svids), indices_batch_sz):
             time.sleep(5.0)
