@@ -7,51 +7,48 @@ This script handles all of the business related to affinities. This
 involves the following 4 steps, each of which has a corresponding
 subcommand.
 
-    [Step 0]
-          Figure out which pairs of supervoxels should be candidates
-          for merges and the point at which a targeted inference should
-          be run to determine their affinity. Writes a
-          ResegmentationRequest proto for later steps to process.
-          Run
-                $ python run_resegmentation.py build_req --help
-          to see how.
-    [Step 1]
-        Run resegmentation to determine affinities. This writes a ton
-        of .npz files with targeted inference results which Step 2
-        will process.
-            $ python run_resegmentation.py run --help
-        will tell you more. But this is the most expensive step! It
-        can be an absolutely huge number of inferences! You gotta
-        parallelize it. So, this step supports multi-node parallelism
-        in addition to intra-node parallelism. To use the multi-node, I
-        recommend running inside GNU parallel:
-             $ parallel --lb \
-               "srun $(SRUNFLAGS) python run_resegmentation.py \
-                   run \
-                   --resegmentation_request XXX \
-                   --rank {} --nworkers 4" \
-               ::: seq 0 3
-        Except maybe with more workers... haha. Hope you have a lot
-        of GPUs.
-    [Step 2]
-        Analyze the results of those resegmentation inferences, and
-        write a table of affinities, aka a "merge table" in neuclease
-        jargon.
-            $ python run_resegmentation.py analyze --help
-    [Step 3]
-        Given an affinity threshold in (0, 1), merge all neurites with
-        affinity larger than the threshold. Then, post that merge (in a
-        very destructive fashion!) to the labels instance in a DVID
-        repo. Don't use a repo that has been traced.
-            $ python run_resegmentation.py post_automerge --help
+[Step 0]
+      Figure out which pairs of supervoxels should be candidates for
+      merges and the point at which a targeted inference should be run
+      to determine their affinity. Writes a ResegmentationRequest proto
+      for later steps to process. Run
+            $ python run_resegmentation.py build_req --help
+      to see how.
+[Step 1]
+    Run resegmentation to determine affinities. This writes a ton of
+    .npz files with targeted inference results which Step 2 will
+    process.
+        $ python run_resegmentation.py run --help
+    will tell you more. But this is the most expensive step! It can be
+    an absolutely huge number of inferences! You gotta parallelize it.
+    So, this step supports multi-node parallelism in addition to intra-
+    node parallelism. To use the multi-node, I recommend running inside
+    GNU parallel:
+         $ parallel --lb \
+           "srun $(SRUNFLAGS) python run_resegmentation.py \
+               run \
+               --resegmentation_request XXX \
+               --rank {} --nworkers 4" \
+           ::: seq 0 3
+    Except maybe with more workers...haha. Hope you have a lot of GPUs.
+[Step 2]
+    Analyze the results of those resegmentation inferences, and write a
+    table of affinities, aka a "merge table" in neuclease jargon.
+        $ python run_resegmentation.py analyze --help
+[Step 3]
+    Given an affinity threshold in (0, 1), merge all neurites with
+    affinity greater than the threshold. Then, post that merge (in a
+    very destructive fashion!) to the labels instance in a DVID repo.
+    Don't use a repo that has been traced.
+        $ python run_resegmentation.py post_automerge --help
 """
 import argparse
 import collections
 import datetime
 import json
 import logging
-import time
 import os
+import time
 
 import h5py
 import joblib
@@ -72,7 +69,6 @@ from ffn.utils import pair_detector
 # anisotropy of the metric. Our voxels are isotropic so
 # not worried about setting this to physical units.
 VOXEL_SZ = [1, 1, 1]
-
 
 # What's this? See:
 # github.com/janelia-flyem/neuclease/blob/master/neuclease/merge_table.py
