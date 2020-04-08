@@ -92,7 +92,7 @@ class timer:
         self.start = time.time()
 
     def __exit__(self, *args):
-        print(self.message, "Took", time.time() - self.start, "s.")
+        print(f"{self.message} Took {time.time() - self.start:3g} s.")
 
 
 def get_resegmentation_request(resegmentation_request_path):
@@ -456,6 +456,9 @@ def post_automerge(
 
     # Update these indices according to merges and post to DVID
     the_time = datetime.datetime.now().isoformat()
+    li_proto_batch = []
+    batch_i = 0
+    nbatch = len(merges) // indices_batch_sz
     with timer("Posted all merged label indices."):
         for merge in merges:
             merge_pli_blocks = pd.concat(
@@ -471,19 +474,33 @@ def post_automerge(
             )
             # Converts pandas -> protobuf for posting
             new_li_proto = neuclease.dvid.create_labelindex(new_pli)
-            # Hit POST .../index once for each merge
-            with timer(f"Posted merged index for label {new_pli.label}."):
-                neuclease.dvid.post_labelindex(
+            li_proto_batch.append(new_li_proto)
+            if len(li_proto_batch) >= indices_batch_sz:
+                # Hit POST .../indices once for each merge batch
+                with timer(f"Posted batch {batch_i} / {nbatch}."):
+                    neuclease.dvid.post_labelindices(
+                        dvid_host,
+                        repo_uuid,
+                        "labels",
+                        new_li_proto,
+                        li_proto_batch,
+                    )
+                li_proto_batch = []
+        if li_proto_batch:
+            with timer("Posted final batch."):
+                neuclease.dvid.post_labelindices(
                     dvid_host,
                     repo_uuid,
                     "labels",
-                    new_pli.label,
                     new_li_proto,
+                    li_proto_batch,
                 )
+
 
     # Upload new mappings ---------------------------------------------
     with timer("Made mapping series."):
         # Make pd.Series with the new labels
+        print(svids_in_merges[:10])
         svids = [svid for merge in svids_in_merges for svid in merge]
         bodies = [merge[0] for merge in svids_in_merges for _ in merge]
         mappings = pd.Series(data=bodies, index=svids)
