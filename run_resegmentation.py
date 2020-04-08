@@ -393,7 +393,7 @@ def post_automerge(
 
     with timer("Clustered."):
         # Make merge table into wide nsvs x nsvs affinity matrix
-        affinities = sp.dok_matrix((nsvs, nsvs), dtype=np.float)
+        affinities = subparsers.dok_matrix((nsvs, nsvs), dtype=np.float)
         for row in merge_table.itertuples():
             i, j = svid2zid[row.id_a], svid2zid[row.id_b]
             affinities[i, j] = affinities[j, i] = row.score
@@ -492,10 +492,10 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
 
     # We'll use a subparser interface to break up the steps.
-    sp = ap.add_subparsers(dest="task")
+    subparsers = ap.add_subparsers(dest="task")
 
     # Step 0: Detect pair candidates and build ResegmentationRequest --
-    brr_p = sp.add_parser(
+    brr_p = subparsers.add_parser(
         "build_req",
         help="Step 0: Detect possible pairs and make a Resegmentation"
         "Request proto to pass to later steps.",
@@ -548,7 +548,7 @@ if __name__ == "__main__":
     brr_rr_g.add_argument("--radius", type=int, default=48)
 
     # Step 1: Resegmentation request runner ---------------------------
-    run_p = sp.add_parser(
+    run_p = subparsers.add_parser(
         "run",
         help="Step 1: Run the inferences specified in the "
         "ResegmentationRequest.",
@@ -573,7 +573,7 @@ if __name__ == "__main__":
     run_par_g.add_argument("--nworkers", type=int, default=1)
 
     # Step 2: Analysis / merge table builder --------------------------
-    ana_p = sp.add_parser(
+    ana_p = subparsers.add_parser(
         "analyze",
         help="Step 2: Analyze results from run step and spit out merge table.",
     )
@@ -593,7 +593,7 @@ if __name__ == "__main__":
     )
 
     # Step 3: Post automerge to DVID ----------------------------------
-    post_p = sp.add_parser(
+    post_p = subparsers.add_parser(
         "post_automerge",
         help="Use the merge table from the last step to decide on an "
         "automated merge, and post that to DVID. Please only use this on "
