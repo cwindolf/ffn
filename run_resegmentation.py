@@ -398,10 +398,11 @@ def post_automerge(
 
     with timer("Clustered."):
         # Make merge table into wide nsvs x nsvs affinity matrix
-        affinities = np.zeros((nmergedsvs, nmergedsvs), dtype=np.float)
-        for row in thresholded.itertuples():
-            i, j = svid2zid[row.id_a], svid2zid[row.id_b]
-            affinities[i, j] = affinities[j, i] = row.score
+        with timer("Merge table long -> wide."):
+            affinities = np.zeros((nmergedsvs, nmergedsvs), dtype=np.float)
+            for row in thresholded.itertuples():
+                i, j = svid2zid[row.id_a], svid2zid[row.id_b]
+                affinities[i, j] = affinities[j, i] = row.score
 
         # Do clustering
         distances = 1 - affinities
