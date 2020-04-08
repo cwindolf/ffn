@@ -599,6 +599,13 @@ if __name__ == "__main__":
     post_p.add_argument(
         "--threshold", type=float, help="Automatic merge threshold."
     )
+    post_p.add_argument(
+        "--indices_batch_size",
+        type=int,
+        default=512,
+        help="Number of labelindices to post at a time.",
+    )
+
     post_dvid_g = post_p.add_argument_group(
         title="DVID",
         description="Not to harp on this, but like, don't use a repo that has "
