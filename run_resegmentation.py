@@ -409,6 +409,7 @@ def post_automerge(
             n_clusters=None,
             affinity="precomputed",
             linkage="single",
+            distance_threshold=1 - threshold,
         )
         agg.fit(distances)
 
