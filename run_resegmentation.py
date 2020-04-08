@@ -459,7 +459,7 @@ def post_automerge(
     with timer("Posted all merged label indices."):
         for merge in merges:
             merge_pli_blocks = pd.concat(
-                [plis[sv] for sv in merge], ignore_index=True
+                [plis[sv].blocks for sv in merge], ignore_index=True
             )
             # Create a neuclease PandasLabelIndex containing our automerge
             new_pli = neuclease.dvid.PandasLabelIndex(
