@@ -675,5 +675,5 @@ if __name__ == "__main__":
             args.threshold,
             dvid_host,
             args.repo,
-            indices_batch_sz=args.indices_batch_sz,
+            indices_batch_sz=args.indices_batch_size,
         )
