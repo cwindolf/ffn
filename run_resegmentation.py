@@ -393,7 +393,7 @@ def post_automerge(
 
     with timer("Clustered."):
         # Make merge table into wide nsvs x nsvs affinity matrix
-        affinities = subparsers.dok_matrix((nsvs, nsvs), dtype=np.float)
+        affinities = sp.dok_matrix((nsvs, nsvs), dtype=np.float)
         for row in merge_table.itertuples():
             i, j = svid2zid[row.id_a], svid2zid[row.id_b]
             affinities[i, j] = affinities[j, i] = row.score
