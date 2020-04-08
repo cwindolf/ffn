@@ -57,10 +57,7 @@ import pandas as pd
 from google.protobuf import text_format
 from sklearn.cluster import AgglomerativeClustering
 
-from ffn.inference import inference
 from ffn.inference import inference_pb2
-from ffn.inference import resegmentation
-from ffn.inference import resegmentation_analysis
 from ffn.utils import bounding_box_pb2
 from ffn.utils import geom_utils
 from ffn.utils import pair_detector
@@ -221,6 +218,9 @@ def build_reseg_req(
 
 def run_inferences(reseg_req_path, nthreads, rank, nworkers):
     """Run inferences specified in a ResegmentationRequest."""
+    from ffn.inference import inference
+    from ffn.inference import resegmentation
+
     # Configure logger
     logger = logging.getLogger(f"[reseg rank{rank}]")
 
@@ -271,6 +271,9 @@ def run_inferences(reseg_req_path, nthreads, rank, nworkers):
 
 def analyze_results(reseg_req_path, affinities_npy, bigmem, nthreads):
     """Produce affinities from completed ResegmentationRequest."""
+    from ffn.inference import resegmentation
+    from ffn.inference import resegmentation_analysis
+
     # Crash now rather than after doing all the work
     assert bool(affinities_npy)
     assert not os.path.exists(affinities_npy)
