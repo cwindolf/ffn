@@ -382,27 +382,28 @@ def post_automerge(
     # Decide on automerge ---------------------------------------------
     # neuclease will normalize the merge table a little for us
     merge_table = neuclease.merge_table.load_merge_table(affinities_npy)
-    thresholded = merge_table[merge_table['score'] > threshold]
+    thresholded = merge_table[merge_table["score"] > threshold]
 
     # Get all supervoxel IDs present in merge table
-    all_svids = np.union1d(merge_table["id_a"].values, merge_table["id_b"].values)
+    all_svids = np.union1d(
+        merge_table["id_a"].values, merge_table["id_b"].values
+    )
     nsvs = all_svids.size
     del all_svids
-    merge_svids = np.union1d(thresholded["id_a"].values, thresholded["id_b"].values)
+    merge_svids = np.union1d(
+        thresholded["id_a"].values, thresholded["id_b"].values
+    )
     np.sort(merge_svids)
     assert merge_svids[0] > 0  # We should not be getting background here.
     nmergedsvs = merge_svids.size
     print(f"Attempting to merge {nmergedsvs} svs out of {nsvs} total.")
-    # Make a reverse index
-    svid2zid = dict(zip(merge_svids, np.arange(nmergedsvs)))
 
+    # Cluster using connected components (networkx)
     with timer("Clustered."):
-        # Make a graph
-        edges = []
-        for row in thresholded.itertuples():
-            edges.append((row.id_a, row.id_b))
-        merges = list(nx.connected_components(nx.Graph(edges)))
-
+        edges = [(row.id_a, row.id_b) for row in thresholded.itertuples()]
+        merges = list(
+            list(sorted(cc)) for cc in nx.connected_components(nx.Graph(edges))
+        )
 
     # Log stats
     print(
@@ -433,7 +434,7 @@ def post_automerge(
             merge_pli_blocks = pd.concat(
                 [plis[sv].blocks for sv in merge], ignore_index=True
             )
-            print('Merge had', len(merge_pli_blocks), 'svs.')
+            print("Merge had", len(merge_pli_blocks), "svs.")
             # Create a neuclease PandasLabelIndex containing our automerge
             new_pli = neuclease.dvid.PandasLabelIndex(
                 merge_pli_blocks,
@@ -449,22 +450,15 @@ def post_automerge(
                 # Hit POST .../indices once for each merge batch
                 with timer(f"Posted batch {batch_i} / {nbatch}."):
                     neuclease.dvid.post_labelindices(
-                        dvid_host,
-                        repo_uuid,
-                        "labels",
-                        li_proto_batch,
+                        dvid_host, repo_uuid, "labels", li_proto_batch,
                     )
                 batch_i += 1
                 li_proto_batch = []
         if li_proto_batch:
             with timer("Posted final batch."):
                 neuclease.dvid.post_labelindices(
-                    dvid_host,
-                    repo_uuid,
-                    "labels",
-                    li_proto_batch,
+                    dvid_host, repo_uuid, "labels", li_proto_batch,
                 )
-
 
     # Upload new mappings ---------------------------------------------
     with timer("Made mapping series."):
