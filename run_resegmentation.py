@@ -408,27 +408,32 @@ def post_automerge(
     # Log stats
     print(
         f"Agglomeration merged {nmergedsvs} out of {nsvs} original "
-        f"supervoxels into {len(merges)} neurites."
+        f"supervoxels into {len(merges)} neurites. That means the new "
+        f"neurites have an average of {len(merges) / nmergedsvs} svs."
     )
     assert all(sv in merge_svids for merge in merges for sv in merge)
 
     # Update label index ----------------------------------------------
     # Get the old index for svids who are gonna change
     # Do this by hitting GET .../indices with batches of svids
-    with timer("Downloaded label indices."):
+    batch_i = 0
+    nbatch = len(merges) // indices_batch_sz
+    with timer("Downloaded all label indices."):
         plis = {}
         for i in range(0, len(merge_svids), indices_batch_sz):
+            time.sleep(5.0)
             svid_batch = merge_svids[i : i + indices_batch_sz]
-            for pli in neuclease.dvid.fetch_labelindices(
-                dvid_host, repo_uuid, "labels", svid_batch, format="pandas"
-            ):
-                plis[pli.label] = pli
+            with timer(f"Downloaded label index batch {batch_i} / {nbatch}."):
+                for pli in neuclease.dvid.fetch_labelindices(
+                    dvid_host, repo_uuid, "labels", svid_batch, format="pandas"
+                ):
+                    plis[pli.label] = pli
+                batch_i += 1
 
     # Update these indices according to merges and post to DVID
     the_time = datetime.datetime.now().isoformat()
     li_proto_batch = []
     batch_i = 0
-    nbatch = len(merges) // indices_batch_sz
     with timer("Posted all merged label indices."):
         for merge in merges:
             merge_pli_blocks = pd.concat(
