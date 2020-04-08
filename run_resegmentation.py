@@ -55,6 +55,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from google.protobuf import text_format
+import scipy.sparse as sp
 from sklearn.cluster import AgglomerativeClustering
 
 from ffn.inference import inference_pb2
@@ -392,7 +393,7 @@ def post_automerge(
 
     with timer("Clustered."):
         # Make merge table into wide nsvs x nsvs affinity matrix
-        affinities = np.zeros((nsvs, nsvs))
+        affinities = sp.dok_matrix((nsvs, nsvs), dtype=np.float)
         for row in merge_table.itertuples():
             i, j = svid2zid[row.id_a], svid2zid[row.id_b]
             affinities[i, j] = affinities[j, i] = row.score
