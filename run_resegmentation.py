@@ -11,14 +11,18 @@ I recommend running this command inside GNU parallel like:
 for easy rank-based parallelism.
 """
 import argparse
+import collections
+import datetime
 import json
 import logging
+import time
 import os
 
 import h5py
 import joblib
 import numpy as np
 from google.protobuf import text_format
+from sklearn.cluster import AgglomerativeClustering
 
 from ffn.inference import inference
 from ffn.inference import inference_pb2
@@ -49,6 +53,17 @@ MERGE_TABLE_DTYPE = [
 ]
 
 # ------------------------------ library ------------------------------
+
+
+class timer:
+    def __init__(self, message):
+        self.message = message
+
+    def __enter__(self):
+        self.start = time.time()
+
+    def __exit__(self, *args):
+        print(self.message, "Took", time.time() - self.start, "s.")
 
 
 def get_resegmentation_request(resegmentation_request_path):
@@ -305,9 +320,142 @@ def analyze_results(reseg_req_path, affinities_npy, bigmem, nthreads):
 # ------------------ step 3: post an automatic merge ------------------
 
 
-def post_automerge(affinities_npy, threshold):
-    merge_table = np.load(affinities_npy)
-    assert merge_table.dtype == MERGE_TABLE_DTYPE
+def post_automerge(
+    affinities_npy, threshold, dvid_host, repo_uuid, indices_batch_sz=512
+):
+    """
+    Many thanks to Stuart Berg @stuarteberg for the code. To get this
+    working please clone https://github.com/janelia-flyem/neuclease/
+    and pip install .
+    You might also need to `conda install -c flyem-forge dvidutils`
+    Of course the whole concept of automerging is kind of useless
+    without neuclease, so you probably already have it.
+    """
+    assert 0 < threshold < 1
+
+    # I didn't want to make neuclease a hard dependency for the rest
+    # of the script.
+    import neuclease.merge_table
+    import neuclease.dvid
+    import pandas as pd
+
+    # Munge dvid host -------------------------------------------------
+    if not dvid_host and "DVIDHOST" in os.environ:
+        port = os.environ.get("DVIDPORT", 8000)
+        dvid_host = f"{os.environ['DVIDHOST']}:{port}"
+    else:
+        raise ValueError(f"Bad dvid host {dvid_host}.")
+
+    # Hit host with a simple api call to make sure it works
+    with timer("Fetched mutid."):
+        repo_info = neuclease.dvid.fetch_repo_info(dvid_host, repo_uuid)
+        last_mutid = repo_info["MutationID"]
+
+    # Decide on automerge ---------------------------------------------
+    # neuclease will normalize the merge table a little for us
+    merge_table = neuclease.merge_table.load_merge_table(affinities_npy)
+
+    # Get all supervoxel IDs present in merge table
+    svids = np.union1d(merge_table["id_a"].values, merge_table["id_b"].values)
+    np.sort(svids)
+    assert svids[0] > 0  # We should not be getting background here.
+    nsvs = svids.size
+    # Make a reverse index
+    svid2zid = dict(zip(svids, np.arange(nsvs)))
+
+    with timer("Clustered."):
+        # Make merge table into wide nsvs x nsvs affinity matrix
+        affinities = np.zeros((nsvs, nsvs))
+        for row in merge_table.itertuples():
+            i, j = svid2zid[row.id_a], svid2zid[row.id_b]
+            affinities[i, j] = affinities[j, i] = row.score
+
+        # Do clustering
+        distances = 1 - affinities
+        agg = AgglomerativeClustering(
+            n_clusters=None,
+            affinity="precomputed",
+            linkage="single",
+            distance_threshold=1 - threshold,
+        )
+        agg.fit(distances)
+
+    # Log stats
+    print(
+        f"Agglomeration merged {agg.n_leaves_} out of {nsvs} original "
+        f"supervoxels into {agg.n_clusters_} neurites."
+    )
+
+    # These are in the same order as svids above. So, we got the merges
+    # now, OK? We just need to find out like, who was actually part of
+    # a merge, i.e. what svids are part of cluster labels with more
+    # than one member. And then tell DVID.
+    with timer("Processed clusters into merges."):
+        # Collect svids for each label
+        label_svids = collections.defaultdict(set)
+        for label, svid in zip(agg.labels_, svids):
+            label_svids[label].add(svid)
+
+        # See what svids are part of clusters with more than one label
+        svids_in_merges = set()
+        merges = []
+        for label, svids in label_svids.items():
+            if len(svids) > 1:
+                svids_in_merges |= svids
+                merges.append(list(sorted(svids)))
+        svids_in_merges = np.array(list(sorted(svids_in_merges)))
+
+    # Update label index ----------------------------------------------
+    # Get the old index for svids who are gonna change
+    # Do this by hitting GET .../indices with batches of svids
+    plis = {}
+    with timer("Downloaded label indices."):
+        for i in range(0, len(svids_in_merges), indices_batch_sz):
+            svid_batch = svids_in_merges[i : i + indices_batch_sz]
+            pli = neuclease.dvid.fetch_labelindices(
+                dvid_host, repo_uuid, "labels", svid_batch, format="pandas"
+            )
+            plis[pli.label] = pli
+
+    # Update these indices according to merges and post to DVID
+    the_time = datetime.datetime.now().isoformat()
+    with timer("Posted all merged label indices."):
+        for merge in merges:
+            merge_pli_blocks = pd.concat(
+                [plis[sv] for sv in merge], ignore_index=True
+            )
+            # Create a neuclease PandasLabelIndex containing our automerge
+            new_pli = neuclease.dvid.PandasLabelIndex(
+                merge_pli_blocks,
+                merge[0],  # New label is gonna be the smallest svid in merge
+                last_mutid + 1,
+                the_time,
+                os.environ.get("USER", "automerge_unknown_user"),
+            )
+            # Converts pandas -> protobuf for posting
+            new_li_proto = (neuclease.dvid.create_labelindex(new_pli),)
+            # Hit POST .../index once for each merge
+            with timer(f"Posted merged index for label {new_pli.label}."):
+                neuclease.dvid.post_labelindex(
+                    dvid_host,
+                    repo_uuid,
+                    "labels",
+                    new_pli.label,
+                    new_li_proto,
+                )
+
+    # Upload new mappings ---------------------------------------------
+    with timer("Made mapping series."):
+        # Make pd.Series with the new labels
+        svids = [svid for merge in svids_in_merges for svid in merge]
+        bodies = [merge[0] for merge in svids_in_merges for _ in merge]
+        mappings = pd.Series(data=bodies, index=svids)
+
+    with timer("Posted mappings to DVID"):
+        # This hits POST .../mappings
+        neuclease.dvid.post_mappings(
+            dvid_host, repo_uuid, "labels", mappings, last_mutid + 2
+        )
 
 
 # ------------------------------- main --------------------------------
@@ -356,18 +504,20 @@ if __name__ == "__main__":
         action="store_true",
         help="Load init segmentation into memory when detecting pairs.",
     )
-    rr_g = brr_p.add_argument_group(
+    brr_rr_g = brr_p.add_argument_group(
         title="ResegmentationRequest proto fields",
         description="These flags will set fields in the output proto. Check "
         "out inference.proto to see their documentation, and feel free to add "
         "more of them here.",
     )
-    rr_g.add_argument("--output_directory")
-    rr_g.add_argument("--subdir_digits", type=int, default=2)
-    rr_g.add_argument("--max_retry_iters", type=int, default=1)
-    rr_g.add_argument("--segment_recovery_fraction", type=float, default=0.5)
-    rr_g.add_argument("--max_distance", type=float, default=2.0)
-    rr_g.add_argument("--radius", type=int, default=48)
+    brr_rr_g.add_argument("--output_directory")
+    brr_rr_g.add_argument("--subdir_digits", type=int, default=2)
+    brr_rr_g.add_argument("--max_retry_iters", type=int, default=1)
+    brr_rr_g.add_argument(
+        "--segment_recovery_fraction", type=float, default=0.5
+    )
+    brr_rr_g.add_argument("--max_distance", type=float, default=2.0)
+    brr_rr_g.add_argument("--radius", type=int, default=48)
 
     # Step 1: Resegmentation request runner ---------------------------
     run_p = sp.add_parser(
@@ -386,13 +536,13 @@ if __name__ == "__main__":
         help="Number of threads per rank (overrides concurrent_requests field "
         "in the proto if != 0).",
     )
-    mpi_g = run_p.add_argument_group(
+    run_par_g = run_p.add_argument_group(
         title="Inter-node Parallelism",
         description="MPI style rank-based multi node parallelism. Work is "
         "split naively across the ranks.",
     )
-    mpi_g.add_argument("--rank", type=int, default=0)
-    mpi_g.add_argument("--nworkers", type=int, default=1)
+    run_par_g.add_argument("--rank", type=int, default=0)
+    run_par_g.add_argument("--nworkers", type=int, default=1)
 
     # Step 2: Analysis / merge table builder --------------------------
     ana_p = sp.add_parser(
@@ -418,11 +568,28 @@ if __name__ == "__main__":
     post_p = sp.add_parser(
         "post_automerge",
         help="Use the merge table from the last step to decide on an "
-        "automated merge, and post that to DVID.",
+        "automated merge, and post that to DVID. Please only use this on "
+        "brand new repos, since it is destructive.",
     )
     post_p.add_argument("--affinities_npy", help="Merge table from step 2.")
     post_p.add_argument(
         "--threshold", type=float, help="Automatic merge threshold."
+    )
+    post_dvid_g = post_p.add_argument_group(
+        title="DVID",
+        description="Not to harp on this, but like, don't use a repo that has "
+        "been traced, this will destroy the work.",
+    )
+    post_p.add_argument(
+        "--repo",
+        help="UUID of DVID repo whose labels and mappings we will overwrite.",
+    )
+    post_p.add_argument(
+        "--dvid",
+        default="",
+        help="<host>:<port>. If environment variable DVIDHOST is set, we will "
+        "use that for the host, and 8000 for the port unless DVIDPORT is also "
+        "set.",
     )
 
     args = ap.parse_args()
@@ -433,6 +600,7 @@ if __name__ == "__main__":
     else:
         logging.basicConfig(level=logging.INFO)
 
+    # Switch on task to dispatch to its runner function.
     if args.task == "build_req":
         build_reseg_req(
             args.resegmentation_request,
@@ -463,4 +631,10 @@ if __name__ == "__main__":
             args.nthreads,
         )
     elif args.task == "post_automerge":
-        post_automerge(args.affinities_npy, args.threshold)
+        post_automerge(
+            args.affinities_npy,
+            args.threshold,
+            args.dvid,
+            args.repo,
+            indices_batch_sz=args.indices_batch_sz,
+        )
