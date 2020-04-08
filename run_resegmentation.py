@@ -378,22 +378,28 @@ def post_automerge(
     with timer("Fetched mutid."):
         repo_info = neuclease.dvid.fetch_repo_info(dvid_host, repo_uuid)
         last_mutid = repo_info["MutationID"]
+    print("It was", last_mutid)
 
     # Decide on automerge ---------------------------------------------
     # neuclease will normalize the merge table a little for us
     merge_table = neuclease.merge_table.load_merge_table(affinities_npy)
+    thresholded = merge_table[merge_table['score'] > threshold]
 
     # Get all supervoxel IDs present in merge table
-    svids = np.union1d(merge_table["id_a"].values, merge_table["id_b"].values)
-    np.sort(svids)
-    assert svids[0] > 0  # We should not be getting background here.
-    nsvs = svids.size
+    all_svids = np.union1d(merge_table["id_a"].values, merge_table["id_b"].values)
+    nsvs = all_svids.size
+    del all_svids
+    merge_svids = np.union1d(thresholded["id_a"].values, thresholded["id_b"].values)
+    np.sort(merge_svids)
+    assert merge_svids[0] > 0  # We should not be getting background here.
+    nmergedsvs = merge_svids.size
+    print(f"Attempting to merge {nmergedsvs} svs out of {nsvs} total.")
     # Make a reverse index
-    svid2zid = dict(zip(svids, np.arange(nsvs)))
+    svid2zid = dict(zip(merge_svids, np.arange(nmergedsvs)))
 
     with timer("Clustered."):
         # Make merge table into wide nsvs x nsvs affinity matrix
-        affinities = sp.dok_matrix((nsvs, nsvs), dtype=np.float)
+        affinities = np.zeros((nmergedsvs, nmergedsvs), dtype=np.float)
         for row in merge_table.itertuples():
             i, j = svid2zid[row.id_a], svid2zid[row.id_b]
             affinities[i, j] = affinities[j, i] = row.score
@@ -404,7 +410,6 @@ def post_automerge(
             n_clusters=None,
             affinity="precomputed",
             linkage="single",
-            distance_threshold=1 - threshold,
         )
         agg.fit(distances)
 
@@ -421,7 +426,7 @@ def post_automerge(
     with timer("Processed clusters into merges."):
         # Collect svids for each label
         label_svids = collections.defaultdict(set)
-        for label, svid in zip(agg.labels_, svids):
+        for label, svid in zip(agg.labels_, merge_svids):
             label_svids[label].add(svid)
 
         # See what svids are part of clusters with more than one label
@@ -432,6 +437,8 @@ def post_automerge(
                 svids_in_merges |= svids
                 merges.append(list(sorted(svids)))
         svids_in_merges = np.array(list(sorted(svids_in_merges)))
+        assert (svids_in_merges == merge_svids).all()
+    del merge_svids
 
     # Update label index ----------------------------------------------
     # Get the old index for svids who are gonna change
