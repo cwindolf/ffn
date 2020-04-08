@@ -136,7 +136,7 @@ if __name__ == "__main__":
             initial_value=np.full((1, *bluron.shape, 1), logit(0.5), dtype=np.float32)
         )
         else:
-            mask = tf.constant(bluron[None, ..., None])
+            mask = tf.constant(logit(bluron[None, ..., None]))
         net = tf.concat([dd_image, mask], axis=4)
         logits = convstacktools.fixed_convstack_3d(
             net, weights, depth=args.depth
