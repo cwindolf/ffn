@@ -2,14 +2,17 @@
 This is not exactly a deep dream. Not sure what to call it.
 """
 import argparse
-import numpy as np
-import tensorflow as tf
+
 import matplotlib.pyplot as plt
+import numpy as np
 import skimage.morphology as morpho
+import tensorflow as tf
+from scipy.special import logit
 from skimage.filters import gaussian
 
 from ffn.training.models import convstack_3d
 from secgan.models import convstacktools
+
 
 # ------------------------------ library ------------------------------
 
@@ -130,7 +133,7 @@ if __name__ == "__main__":
         )
         if args.flat_input_mask:
             mask = tf.Variable(
-            initial_value=np.full((1, *bluron.shape, 1), 0.5, dtype=np.float32)
+            initial_value=np.full((1, *bluron.shape, 1), logit(0.5), dtype=np.float32)
         )
         else:
             mask = tf.constant(bluron[None, ..., None])
