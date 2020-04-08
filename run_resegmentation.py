@@ -500,9 +500,8 @@ def post_automerge(
     # Upload new mappings ---------------------------------------------
     with timer("Made mapping series."):
         # Make pd.Series with the new labels
-        print(svids_in_merges[:10])
-        svids = [svid for merge in svids_in_merges for svid in merge]
-        bodies = [merge[0] for merge in svids_in_merges for _ in merge]
+        svids = [svid for merge in merges for svid in merge]
+        bodies = [merge[0] for merge in merges for _ in merge]
         mappings = pd.Series(data=bodies, index=svids)
 
     with timer("Posted mappings to DVID."):
