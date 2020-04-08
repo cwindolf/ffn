@@ -484,6 +484,7 @@ def post_automerge(
                         "labels",
                         li_proto_batch,
                     )
+                batch_i += 1
                 li_proto_batch = []
         if li_proto_batch:
             with timer("Posted final batch."):
