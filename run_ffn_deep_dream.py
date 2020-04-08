@@ -71,6 +71,8 @@ if __name__ == "__main__":
     ap.add_argument("--neuron-radius", type=int, default=4)
     ap.add_argument("--blur-radius", type=int, default=0.5)
 
+    ap.add_argument("--flat-input-mask", action="store_true")
+
     args = ap.parse_args()
 
     # ------------------------- make dd input -------------------------
@@ -126,7 +128,12 @@ if __name__ == "__main__":
                 scale=0.1, size=(1, *bluron.shape, 1)
             ).astype(np.float32)
         )
-        mask = tf.constant(bluron[None, ..., None])
+        if args.flat_input_mask:
+            mask = tf.Variable(
+            initial_value=np.full((1, *bluron.shape, 1), 0.5, dtype=np.float32)
+        )
+        else:
+            mask = tf.constant(bluron[None, ..., None])
         net = tf.concat([dd_image, mask], axis=4)
         logits = convstacktools.fixed_convstack_3d(
             net, weights, depth=args.depth
@@ -135,10 +142,13 @@ if __name__ == "__main__":
             tf.nn.sigmoid_cross_entropy_with_logits(logits=logits, labels=mask)
         )
         opt = tf.train.AdamOptimizer()
-        dd_op = opt.minimize(loss, var_list=[dd_image])
+        dd_vars = [dd_image]
+        if args.flat_input_mask:
+            dd_vars += [mask]
+        dd_op = opt.minimize(loss, var_list=dd_vars)
         dd_slice = dd_image[0, args.d // 2, :, :, 0]
         init_op = tf.group(
-            tf.variables_initializer([dd_image]),
+            tf.variables_initializer(dd_vars),
             tf.local_variables_initializer(),
             tf.global_variables_initializer(),
         )
