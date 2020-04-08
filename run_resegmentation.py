@@ -84,6 +84,50 @@ MERGE_TABLE_DTYPE = [
 # ------------------------------ library ------------------------------
 
 
+def shist(arr, bins="auto", width=72):
+    """A basic string histogram for printing to terminal
+
+    Modified from @tammoippen's crappyhist.py
+
+    Arguments
+    ---------
+    arr : np.array to get histogram of
+    bins : passed through to np.histogram
+    width : width of generated string
+
+    Returns: histogram string. print it out!
+    """
+    # Compute and normalize histogram
+    hist, edges = np.histogram(arr, bins=bins)
+    hist = hist / hist.max()
+
+    # Text padding details for this particular data
+    # Any need for a negative size?
+    hasneg = (edges < 0).any()
+    # How much space will printing bin edges take up?
+    intlen = hasneg + len(str(int(np.ceil(np.abs(edges).max()))))
+    if np.issubdtype(arr.dtype, np.integer):
+        declen = 0
+    else:
+        declen = 3
+    # the 3 is for ' | '. the declen > 0 is for the decimal point.
+    totlen = intlen + (declen > 0) + declen + 3
+    # How much space is left over for the histogram?
+    histlen = width - totlen
+
+    # Loop to build output string
+    messages = [
+        f"min: {arr.min()}, median: {np.median(arr)}, max: {arr.max()}"
+    ]
+    for freq, edge in zip(hist, edges):
+        # No divider to indicate frequency of 0
+        cchar = " " if freq == 0 else "|"
+        barlen = int(freq * histlen)
+        messages.append(f'{edge:{intlen}.{declen}f} {cchar} {"#" * barlen}')
+
+    return "\n".join(messages)
+
+
 class timer:
     def __init__(self, message):
         self.message = message
@@ -411,9 +455,11 @@ def post_automerge(
         f"Agglomeration merged {nmergedsvs} out of {nsvs} original "
         f"supervoxels into {len(merges)} neurites. That means the new "
         f"neurites have an average of {nmergedsvs / len(merges):3g} svs, "
-        f"and stddev of {np.std(csizes)} svs. Smallest and "
+        f"and stddev of {np.std(csizes):3g} svs. Smallest and "
         f"largest had sizes {min(csizes)}, {max(csizes)}."
     )
+    print("Histogram of cluster sizes:")
+    print(shist(csizes))
     assert all(sv in merge_svids for merge in merges for sv in merge)
 
     # Update label index ----------------------------------------------
