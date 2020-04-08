@@ -459,7 +459,7 @@ def post_automerge(
         f"largest had sizes {min(csizes)}, {max(csizes)}."
     )
     print("Histogram of cluster sizes:")
-    print(shist(csizes))
+    print(shist(csizes, bins=16))
     assert all(sv in merge_svids for merge in merges for sv in merge)
 
     # Update label index ----------------------------------------------
