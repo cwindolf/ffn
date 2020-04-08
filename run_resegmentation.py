@@ -406,6 +406,7 @@ def post_automerge(
 
         # Do clustering
         distances = 1 - affinities
+        del affinities
         agg = AgglomerativeClustering(
             n_clusters=None,
             affinity="precomputed",
@@ -444,14 +445,14 @@ def post_automerge(
     # Update label index ----------------------------------------------
     # Get the old index for svids who are gonna change
     # Do this by hitting GET .../indices with batches of svids
-    plis = {}
     with timer("Downloaded label indices."):
+        plis = {}
         for i in range(0, len(svids_in_merges), indices_batch_sz):
             svid_batch = svids_in_merges[i : i + indices_batch_sz]
-            pli = neuclease.dvid.fetch_labelindices(
+            for pli in neuclease.dvid.fetch_labelindices(
                 dvid_host, repo_uuid, "labels", svid_batch, format="pandas"
-            )
-            plis[pli.label] = pli
+            ):
+                plis[pli.label] = pli
 
     # Update these indices according to merges and post to DVID
     the_time = datetime.datetime.now().isoformat()
