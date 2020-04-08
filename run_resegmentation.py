@@ -339,13 +339,6 @@ def post_automerge(
     import neuclease.dvid
     import pandas as pd
 
-    # Munge dvid host -------------------------------------------------
-    if not dvid_host and "DVIDHOST" in os.environ:
-        port = os.environ.get("DVIDPORT", 8000)
-        dvid_host = f"{os.environ['DVIDHOST']}:{port}"
-    else:
-        raise ValueError(f"Bad dvid host {dvid_host}.")
-
     # Hit host with a simple api call to make sure it works
     with timer("Fetched mutid."):
         repo_info = neuclease.dvid.fetch_repo_info(dvid_host, repo_uuid)
@@ -631,10 +624,17 @@ if __name__ == "__main__":
             args.nthreads,
         )
     elif args.task == "post_automerge":
+        # Munge DVID host
+        dvid_host = args.dvid
+        if not dvid_host and "DVIDHOST" in os.environ:
+            port = os.environ.get("DVIDPORT", 8000)
+            dvid_host = f"{os.environ['DVIDHOST']}:{port}"
+        else:
+            raise ValueError(f"Bad dvid host {dvid_host}.")
         post_automerge(
             args.affinities_npy,
             args.threshold,
-            args.dvid,
+            dvid_host,
             args.repo,
             indices_batch_sz=args.indices_batch_sz,
         )
