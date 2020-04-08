@@ -27,13 +27,13 @@ passes to its `canvas.segment_at(...)`.
 
 import logging
 import multiprocessing.pool
-import numpy as np
-from tqdm import tqdm
 
+import h5py
+import numpy as np
 from scipy.spatial import distance
 from skimage import segmentation
+from tqdm import tqdm
 
-import ppx.data_util as dx
 from ffn.utils import bounding_box
 
 
@@ -100,7 +100,8 @@ class PairDetector:
             # thing into memory at all.
             logging.info("Loading segmentation into memory, since you asked.")
             global init_segmentation
-            init_segmentation = dx.loadspec(init_segmentation_spec)
+            seg_path, seg_dset = init_segmentation_spec.split(":")
+            init_segmentation = h5py.File(seg_path)[seg_dset][:]
 
         # Pool maps over subvolumes, main thread loop reduces
         # results into `segids` and `pair2approach`.
@@ -108,7 +109,7 @@ class PairDetector:
         with multiprocessing.pool.Pool(
             nthreads,
             initializer=PairDetector.proc_initializer,
-            initargs=(init_segmentation_spec, svcalc, bigmem),
+            initargs=(init_segmentation_spec, svcalc, bigmem, max_distance),
         ) as pool, tqdm(
             total=svcalc.num_sub_boxes(),
             smoothing=0.0,
@@ -164,16 +165,16 @@ class PairDetector:
             yield id_a, id_b, point
 
     @staticmethod
-    def proc_initializer(init_segmentation_spec, svcalc, bigmem):
+    def proc_initializer(init_segmentation_spec, svcalc, bigmem, max_distance):
         """Manage variables that don't change across subvolumes."""
         if bigmem:
             global init_segmentation
         else:
-            init_segmentation = dx.loadspec(
-                init_segmentation_spec, readonly_mmap=True
-            )
+            seg_path, seg_dset = init_segmentation_spec.split(":")
+            init_segmentation = h5py.File(seg_path)[seg_dset]
         PairDetector.process_subvolume.init_segmentation = init_segmentation
         PairDetector.process_subvolume.svcalc = svcalc
+        PairDetector.process_subvolume.max_distance = max_distance
 
     @staticmethod
     def process_subvolume(svid):
@@ -184,6 +185,7 @@ class PairDetector:
         # Load up things stored here by the initializer
         svcalc = PairDetector.process_subvolume.svcalc
         init_segmentation = PairDetector.process_subvolume.init_segmentation
+        max_distance = PairDetector.process_subvolume.max_distance
 
         # Get all segids for this subvolume index
         subvolume = svcalc.index_to_sub_box(svid)
@@ -227,7 +229,7 @@ class PairDetector:
 
                 # Check close enough. If so, store this approach.
                 approach_dist = dists[ji, ki]
-                if approach_dist < FLAGS.max_distance:
+                if approach_dist < max_distance:
                     # Key into dictionary
                     pair = int(segid), int(other)
                     # Convert local offset to global point, XYZ
