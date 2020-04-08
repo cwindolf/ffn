@@ -470,7 +470,7 @@ def post_automerge(
                 os.environ.get("USER", "automerge_unknown_user"),
             )
             # Converts pandas -> protobuf for posting
-            new_li_proto = (neuclease.dvid.create_labelindex(new_pli),)
+            new_li_proto = neuclease.dvid.create_labelindex(new_pli)
             # Hit POST .../index once for each merge
             with timer(f"Posted merged index for label {new_pli.label}."):
                 neuclease.dvid.post_labelindex(
