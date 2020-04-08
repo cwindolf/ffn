@@ -409,7 +409,8 @@ def post_automerge(
     print(
         f"Agglomeration merged {nmergedsvs} out of {nsvs} original "
         f"supervoxels into {len(merges)} neurites. That means the new "
-        f"neurites have an average of {len(merges) / nmergedsvs} svs."
+        f"neurites have an average of {len(merges) / nmergedsvs:3g} svs,"
+        f"and stddev of {np.std(list(map(len, merges)))} svs."
     )
     assert all(sv in merge_svids for merge in merges for sv in merge)
 
@@ -439,7 +440,6 @@ def post_automerge(
             merge_pli_blocks = pd.concat(
                 [plis[sv].blocks for sv in merge], ignore_index=True
             )
-            print("Merge had", len(merge_pli_blocks), "svs.")
             # Create a neuclease PandasLabelIndex containing our automerge
             new_pli = neuclease.dvid.PandasLabelIndex(
                 merge_pli_blocks,
