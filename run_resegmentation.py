@@ -482,7 +482,6 @@ def post_automerge(
                         dvid_host,
                         repo_uuid,
                         "labels",
-                        new_li_proto,
                         li_proto_batch,
                     )
                 li_proto_batch = []
@@ -492,7 +491,6 @@ def post_automerge(
                     dvid_host,
                     repo_uuid,
                     "labels",
-                    new_li_proto,
                     li_proto_batch,
                 )
 
