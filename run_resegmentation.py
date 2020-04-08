@@ -52,10 +52,10 @@ import time
 
 import h5py
 import joblib
+import networkx as nx
 import numpy as np
 import pandas as pd
 from google.protobuf import text_format
-from sklearn.cluster import AgglomerativeClustering
 
 from ffn.inference import inference_pb2
 from ffn.utils import bounding_box_pb2
@@ -397,58 +397,27 @@ def post_automerge(
     svid2zid = dict(zip(merge_svids, np.arange(nmergedsvs)))
 
     with timer("Clustered."):
-        # Make merge table into wide nsvs x nsvs affinity matrix
-        with timer("Merge table long -> wide."):
-            affinities = np.zeros((nmergedsvs, nmergedsvs), dtype=np.float)
-            for row in thresholded.itertuples():
-                i, j = svid2zid[row.id_a], svid2zid[row.id_b]
-                affinities[i, j] = affinities[j, i] = row.score
+        # Make a graph
+        edges = []
+        for row in thresholded.itertuples():
+            edges.append((row.id_a, row.id_b))
+        merges = list(nx.connected_components(nx.Graph(edges)))
 
-        # Do clustering
-        distances = 1 - affinities
-        del affinities
-        agg = AgglomerativeClustering(
-            n_clusters=None,
-            affinity="precomputed",
-            linkage="single",
-            distance_threshold=1 - threshold,
-        )
-        agg.fit(distances)
 
     # Log stats
     print(
-        f"Agglomeration merged {agg.n_leaves_} out of {nsvs} original "
-        f"supervoxels into {agg.n_clusters_} neurites."
+        f"Agglomeration merged {nmergedsvs} out of {nsvs} original "
+        f"supervoxels into {len(merges)} neurites."
     )
-
-    # These are in the same order as svids above. So, we got the merges
-    # now, OK? We just need to find out like, who was actually part of
-    # a merge, i.e. what svids are part of cluster labels with more
-    # than one member. And then tell DVID.
-    with timer("Processed clusters into merges."):
-        # Collect svids for each label
-        label_svids = collections.defaultdict(set)
-        for label, svid in zip(agg.labels_, merge_svids):
-            label_svids[label].add(svid)
-
-        # See what svids are part of clusters with more than one label
-        svids_in_merges = set()
-        merges = []
-        for label, svids in label_svids.items():
-            if len(svids) > 1:
-                svids_in_merges |= svids
-                merges.append(list(sorted(svids)))
-        svids_in_merges = np.array(list(sorted(svids_in_merges)))
-        assert (svids_in_merges == merge_svids).all()
-    del merge_svids
+    assert all(sv in merge_svids for merge in merges for sv in merge)
 
     # Update label index ----------------------------------------------
     # Get the old index for svids who are gonna change
     # Do this by hitting GET .../indices with batches of svids
     with timer("Downloaded label indices."):
         plis = {}
-        for i in range(0, len(svids_in_merges), indices_batch_sz):
-            svid_batch = svids_in_merges[i : i + indices_batch_sz]
+        for i in range(0, len(merge_svids), indices_batch_sz):
+            svid_batch = merge_svids[i : i + indices_batch_sz]
             for pli in neuclease.dvid.fetch_labelindices(
                 dvid_host, repo_uuid, "labels", svid_batch, format="pandas"
             ):
@@ -464,6 +433,7 @@ def post_automerge(
             merge_pli_blocks = pd.concat(
                 [plis[sv].blocks for sv in merge], ignore_index=True
             )
+            print('Merge had', len(merge_pli_blocks), 'svs.')
             # Create a neuclease PandasLabelIndex containing our automerge
             new_pli = neuclease.dvid.PandasLabelIndex(
                 merge_pli_blocks,
