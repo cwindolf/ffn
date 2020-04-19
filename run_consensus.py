@@ -12,6 +12,8 @@ so we'll fan out over that and then funnel those results into
 an output volume, which I guess we'll just keep as a memmaped
 hdf5 file.
 """
+# TODO No merging on boundaries.
+# TODO Strip margin?
 import numpy as np
 
 # We're trying to squeeze into uint32. Let's be careful about it.
@@ -108,6 +110,10 @@ def merge_into_main(a, b, old_max_id, min_size=0):
         The result of the merge, to be assigned into the main vol
     new_max_id : int
         The new maximum ID after this merge
+    old_max_id : int
+        Maximum id of `a` before merging
+    b_not_a : indices
+        the indices where b had a seg and a didn't
     """
     if a.shape != b.shape:
         raise ValueError
@@ -319,6 +325,7 @@ def main(_):
                     _thread_main, zip(tier, repeat(thread_params))
                 ):
                     logging.info("Gathered result.")
+
                     # On the main thread, deal with the logic of
                     # merging the ID spaces -- cannot be parallelized.
 
@@ -343,6 +350,7 @@ def main(_):
                     new_max_id = max(max_id, merge.max())
                     seg_outf["max_id"][0] = new_max_id
                     seg_outf["max_id"].flush()
+                    assert new_max_id - max_id == seg_outf["max_id"][0] - max_id
 
                     # Write to the hdf5
                     seg_out[slicer] = merge
@@ -351,8 +359,6 @@ def main(_):
                     n_done += 1
                     logging.info(f"{n_done} done out of {nsb}")
                     logging.info(f"Old max id: {max_id}. New: {new_max_id}")
-
-                # seg_outf.flush()
 
 
 if __name__ == "__main__":
