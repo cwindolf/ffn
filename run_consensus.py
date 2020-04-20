@@ -209,6 +209,7 @@ def main(_):
     assert not in_ax
     assert outf.endswith(".h5")
     assert not os.path.exists(outf)
+    assert dset
 
     # Need some segdirs
     segdirs = FLAGS.segmentation_dirs.split()
