@@ -375,7 +375,7 @@ def build_mask(masks, corner, subvol_size, mask_volume_map=None,
 
 def load_segmentation(segmentation_dir, corner, allow_cpoint=False,
                       threshold=None, split_cc=True, min_size=0,
-                      mask_config=None):
+                      mask_config=None, mmap_mode=None):
   """Loads segmentation from an FFN subvolume.
 
   Args:
@@ -410,39 +410,38 @@ def load_segmentation(segmentation_dir, corner, allow_cpoint=False,
     raise ValueError('Segmentation not found, %s, %r.' %
                      (segmentation_dir, corner))
 
-  with gfile.Open(target_path, 'rb') as f:
-    data = np.load(f, allow_pickle=True)
-    if 'segmentation' in data:
-      seg = data['segmentation']
-    else:
-      raise ValueError('FFN NPZ file %s does not contain valid segmentation.' %
-                       target_path)
+  data = np.load(target_path, allow_pickle=True, mmap_mode=mmap_mode)
+  if 'segmentation' in data:
+    seg = data['segmentation']
+  else:
+    raise ValueError('FFN NPZ file %s does not contain valid segmentation.' %
+                     target_path)
 
-    origins = data['origins'].item()
-    output = seg.astype(np.uint64)
+  origins = data['origins'].item()
+  output = seg.astype(np.uint64)
 
-    logging.info('loading segmentation from: %s', target_path)
+  logging.info('loading segmentation from: %s', target_path)
 
-    if threshold is not None:
-      logging.info('thresholding at %f', threshold)
-      threshold_segmentation(segmentation_dir, corner, output, threshold)
+  if threshold is not None:
+    logging.info('thresholding at %f', threshold)
+    threshold_segmentation(segmentation_dir, corner, output, threshold)
 
-    if mask_config is not None:
-      mask = build_mask(mask_config.masks, corner, seg.shape)
-      output[mask] = 0
+  if mask_config is not None:
+    mask = build_mask(mask_config.masks, corner, seg.shape)
+    output[mask] = 0
 
-    if split_cc or min_size:
-      logging.info('clean up with split_cc=%r, min_size=%d', split_cc,
-                   min_size)
-      new_to_old = segmentation.clean_up(output, split_cc,
-                                         min_size,
-                                         return_id_map=True)
-      new_origins = {}
-      for new_id, old_id in new_to_old.items():
-        if old_id in origins:
-          new_origins[new_id] = origins[old_id]
+  if split_cc or min_size:
+    logging.info('clean up with split_cc=%r, min_size=%d', split_cc,
+                 min_size)
+    new_to_old = segmentation.clean_up(output, split_cc,
+                                       min_size,
+                                       return_id_map=True)
+    new_origins = {}
+    for new_id, old_id in new_to_old.items():
+      if old_id in origins:
+        new_origins[new_id] = origins[old_id]
 
-      origins = new_origins
+    origins = new_origins
 
   return output, origins
 
