@@ -111,7 +111,7 @@ def abelian_split_by_intersection(a, b):
     out[b_not_a] = bna_out[b_not_a]
     out[b_and_a] = both_out[b_and_a]
 
-    return out
+    return out.reshape(orig_shape)
 
 
 def split_merge_sv(subvolume, segmentation_dirs, min_ffn_size):
