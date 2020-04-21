@@ -146,6 +146,7 @@ def merge_into_main(a, b, old_max_id, min_size=0):
     assert max_new_id < np.iinfo(np.uint32).max
     out[b_not_a] = min_new_id + relabeled[b_not_a]
     assert out.max() == max_new_id
+    logging.info(f"maxes? {out.max()}, {max_new_id}, {old_max_id}.")
 
     # Write A
     out[a_fg] = a[a_fg]
