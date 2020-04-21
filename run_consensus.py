@@ -58,6 +58,62 @@ flags.DEFINE_integer(
 )
 
 
+def abelian_split_by_intersection(a, b):
+    if a.shape != b.shape:
+        raise ValueError
+    orig_shape = a.shape
+
+    # XXX Flat views because why again?
+    a = a.ravel()
+    b = b.ravel()
+
+    # Figure out min ID for new segments
+    a_max = a.max()
+    min_new_id = a_max + 1
+    assert min_new_id < np.iinfo(np.uint32).max
+
+    # Boolean foreground / background masks
+    a_fg = a != 0
+    b_fg = b != 0
+    b_and_a = np.logical_and(b_fg, a_fg)
+    b_not_a = np.logical_and(b_fg, np.logical_not(a_fg))
+    a_not_b = np.logical_and(a_fg, np.logical_not(b_fg))
+    # Sparsify
+    b_and_a = b_and_a.nonzero()
+    b_not_a = b_not_a.nonzero()
+    a_not_b = a_not_b.nonzero()
+
+    # Clean / process B \ A and write
+    bna_out = np.zeros(a.shape, dtype=np.uint32)
+    bna_out[b_not_a] = b[b_not_a]
+    segmentation.clean_up(bna_out.reshape(orig_shape))
+    relabeled, id_map = segmentation.make_labels_contiguous(bna_out)
+    max_new_id = min_new_id + max(new_id for _, new_id in id_map)
+    assert max_new_id < np.iinfo(np.uint32).max
+    bna_out[b_not_a] = min_new_id + relabeled[b_not_a]
+    assert bna_out.max() == max_new_id
+    logging.info(f"bna maxes? {bna_out.max()}, {max_new_id}, {a_max}.")
+
+    # Clean / process B and A and write
+    both_out = np.zeros(a.shape, dtype=np.uint32)
+    both_out[b_and_a] = b[b_and_a]
+    segmentation.clean_up(both_out.reshape(orig_shape))
+    relabeled, id_map = segmentation.make_labels_contiguous(both_out)
+    max_new_id = min_new_id + max(new_id for _, new_id in id_map)
+    assert max_new_id < np.iinfo(np.uint32).max
+    both_out[b_and_a] = min_new_id + relabeled[b_and_a]
+    assert both_out.max() == max_new_id
+    logging.info(f"bna maxes? {both_out.max()}, {max_new_id}, {a_max}.")
+
+    # Write output
+    out = np.zeros(a.shape, dtype=np.uint32)
+    out[a_not_b] = a[a_not_b]
+    out[b_not_a] = bna_out[b_not_a]
+    out[b_and_a] = both_out[b_and_a]
+
+    return out
+
+
 def split_merge_sv(subvolume, segmentation_dirs, min_ffn_size):
     segdirs = segmentation_dirs.split()
     # First seg determines bg and all that
@@ -72,7 +128,8 @@ def split_merge_sv(subvolume, segmentation_dirs, min_ffn_size):
         )
         seg_b = seg_b.astype(np.uint64)
         assert seg.shape == seg_b.shape
-        segmentation.split_segmentation_by_intersection(seg, seg_b, 0)
+        # segmentation.split_segmentation_by_intersection(seg, seg_b, 0)
+        seg = abelian_split_by_intersection(seg, seg_b)
 
     seg = segmentation.make_labels_contiguous(seg)[0]
     seg = seg.astype(np.uint64)
@@ -195,7 +252,9 @@ def _thread_init(outf, dset):
 def get_subvolumes(segdir):
     bboxes = []
     for corner in sorted(storage.get_existing_corners(segdir)):
-        seg, _ = storage.load_segmentation(segdir, corner, split_cc=False)
+        seg, _ = storage.load_segmentation(
+            segdir, corner, split_cc=False, mmap_mode="r"
+        )
         # XXX Reverse size, right?
         size = seg.shape
         bboxes.append(bounding_box.BoundingBox(start=corner, size=size))
@@ -352,7 +411,9 @@ def main(_):
                     new_max_id = max(max_id, merge.max())
                     seg_outf["max_id"][0] = new_max_id
                     seg_outf["max_id"].flush()
-                    assert new_max_id - max_id == seg_outf["max_id"][0] - max_id
+                    assert (
+                        new_max_id - max_id == seg_outf["max_id"][0] - max_id
+                    )
 
                     # Write to the hdf5
                     seg_out[slicer] = merge
