@@ -2,7 +2,9 @@
 Please observe that the split oversegmentation operation forms
 an abelian group on the set of segmentations. So, it doesn't
 matter if we first apply the split consensus to merge subvols
-into large vols or if we apply on subvols first.
+into large vols or if we apply on subvols first. In fact, this
+split consensus can be considered as the meet operation on a
+certain poset described below.
 
 In other words, we want to "reduce" a bunch of segs using the
 split consensus and foldl == foldr.
@@ -11,6 +13,79 @@ It's easy to parallelize the bit that works over subvolumes,
 so we'll fan out over that and then funnel those results into
 an output volume, which I guess we'll just keep as a memmaped
 hdf5 file.
+
+Join and meet for segmentations
+-------------------------------
+
+Recall the notions of join and meet:
+https://en.wikipedia.org/wiki/Join_and_meet
+Note that we can define a partial order on segmentations as
+follows. Let $a$ and $b$ be two segmentations of the same
+region, i.e., $a,b : Z_{pqr} -> N$ are two
+assignments of natural numbers to every site on the finite
+3D lattice $Z_{pqr} := Z_p \times Z_q \times Z_r$. (There's
+nothing important about the lattice being 3D, in fact let's
+forget about it and equivalently consider $Z_{pqr}$ to be
+the enumeration of its sites $Z_{pqr}=\{0,...,pqr\}$.
+
+OK, now we can define a partial order, using the symbol $\leq$.
+This relation can be read "is splittier than" in a sense.
+Intuitively, we say that $a \leq b$ when every segment inside
+$a$ is part of only one segment in $b$, so that either $a$ is
+just less dense than $b$ (in the specific sense that every
+segmentation in $a$ is smaller than the one in $b$ or just
+absent), or it's more split than $b$. More precisely, every
+segment in $a$ can be obtained by erasing voxels in a single
+segment from $b$ (more than one segment in $a$ can arise from
+a segment in $b$ in this way). Equivalently and more formally,
+let a segment in a segmentation $x$ be a level set
+$S_k = \{z \in Z_{pqr} : x(z) = k\}$ of $x$ where $k \neq 0$.
+Then, $a \leq b$ when for all segments $S_k$ of $a$, there
+exists some $j\in N$ such that $S_k \subseteq S_j$ and $S_j$
+is a segment in $b$.
+
+Some examples: Let $a$ be some segmentation, and say that
+there exist voxels labeled 1 and 2 in $a$. Let $f: N -> N$
+be the function such that $f(n)=n$ for all $n$ except $n=2$,
+and $f(2)=1$. Then the composition $b(z) = f(a(z))$ is the
+segmentation equal to $a$ but with 1 and 2 merged. Clearly
+the segment $b == 2$ is empty, and $b==1$ is the union of
+$a==1$ and $a==2$. For all $n\notin\{1,2\}$, $b==n$ is the
+same as $a==n$. Thust $a \leq b$, so that merges move you
+up the partial order.
+
+Similarly, erasing voxels and splitting subvoxels are
+operations that move you down the partial order.
+
+Now that we have a handle on this partial order, let's
+consider its meet and join operations.
+
+For meet: let $c,d$ be segmentations, and don't assume
+that $c\leq d$ or $d\leq c$. Form a new segmentation
+$e$ (the join) as follows.  Let $J: N\times N -> N$ be
+the canonical bijection of the pairs of natural numbers
+to the natural numbers, and make sure $J(0,0)=0$. Then
+let $e(z)=J(c(z),d(z))$. I claim that $e\leq c$ and
+$e\leq d$, and what's more that there is no $e\leq e'$
+such that $e'\leq c$, $e'\leq d$, and $e\neq e'$.
+
+This meet is defined in a function below. It's a
+commutative version of the split seg by intersection
+function in ffn.inference.segmentation.
+
+For join: basically the idea is, for any segment ids that
+overlap in $c$ and $d$, they need to get merged. No choice.
+I'll let the reader formalize this.
+
+Notice that the suprema of this poset lattice, the
+kind of Zorn's lemma maximal elements, are the segmentations
+that assign all sites to a single id $k\neq 0$. This suggests
+that we should really "mod out" the permutations of seg IDs,
+i.e., consider the equivalence classes of the eq. rel. $a==b$
+if there exists a permutation $\sigma$ s.t. $\sigma(a(z))=b(z)$
+for all $z$.
+
+Interestingly, the minimal element is unique: the 0 segmentation.
 """
 # TODO No merging on boundaries.
 # TODO Strip margin?
@@ -58,7 +133,7 @@ flags.DEFINE_integer(
 )
 
 
-def abelian_split_by_intersection(a, b):
+def seg_meet(a, b):
     if a.shape != b.shape:
         raise ValueError
     orig_shape = a.shape
@@ -129,7 +204,7 @@ def split_merge_sv(subvolume, segmentation_dirs, min_ffn_size):
         seg_b = seg_b.astype(np.uint64)
         assert seg.shape == seg_b.shape
         # segmentation.split_segmentation_by_intersection(seg, seg_b, 0)
-        seg = abelian_split_by_intersection(seg, seg_b)
+        seg = seg_meet(seg, seg_b)
 
     seg = segmentation.make_labels_contiguous(seg)[0]
     seg = seg.astype(np.uint64)
