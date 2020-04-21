@@ -103,7 +103,7 @@ def abelian_split_by_intersection(a, b):
     assert max_new_id < np.iinfo(np.uint32).max
     both_out[b_and_a] = min_new_id + relabeled[b_and_a]
     assert both_out.max() == max_new_id
-    logging.info(f"bna maxes? {both_out.max()}, {max_new_id}, {a_max}.")
+    logging.info(f"both maxes? {both_out.max()}, {max_new_id}, {a_max}.")
 
     # Write output
     out = np.zeros(a.shape, dtype=np.uint32)
