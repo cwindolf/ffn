@@ -155,23 +155,32 @@ def merge_from_min_id(out, seg, mask, min_new_id, scratch=None):
     # Write new IDs and check invariant
     scratch[mask] = min_new_id + relabeled[mask]
     assert scratch.max() == max_new_id
-    logging.info(f"anb maxes? {scratch.max()}, {max_new_id}.")
     # Write output and update ID invariant
     out.flat[mask] = scratch[mask]
     return max_new_id
 
 
 def seg_meet(a, b, min_new_id=1):
+    """Merge a and b into a single segmentation by "split consensus"
+
+    This implements the "meet" operation described in detail in this
+    file's docstring.
+
+    Parameters
+    ----------
+    a, b : np.array, integer typed, same shape
+    min_new_id : int
+        The output's ID space will start here
+
+    Returns: uint32 np.array with same shape as `a`
+    """
     if a.shape != b.shape:
-        raise ValueError
+        raise ValueError("Segmentations had different shapes.")
     orig_shape = a.shape
     assert min_new_id < np.iinfo(np.uint32).max
-
-    # XXX Flat views because why again?
+    # Boolean foreground / background masks
     a = a.ravel()
     b = b.ravel()
-
-    # Boolean foreground / background masks
     a_fg = a != 0
     b_fg = b != 0
     b_and_a = np.logical_and(b_fg, a_fg)
@@ -181,15 +190,16 @@ def seg_meet(a, b, min_new_id=1):
     b_and_a = b_and_a.nonzero()
     b_not_a = b_not_a.nonzero()
     a_not_b = a_not_b.nonzero()
-
     # Output storage
     out = np.zeros(orig_shape, dtype=np.uint32)
     scratch = np.empty(a.shape, dtype=np.uint32)
-
     # Perform the merges
     new_max_id = merge_from_min_id(out, a, a_not_b, min_new_id, scratch=scratch)
     new_max_id = merge_from_min_id(out, b, b_not_a, new_max_id + 1, scratch=scratch)
     new_max_id = merge_from_min_id(out, a, b_and_a, new_max_id + 1, scratch=scratch)
+    assert new_max_id < np.iinfo(np.uint32).max
+
+    logging.info(f"seg_meet max id {new_max_id}")
 
     return out.reshape(orig_shape)
 
