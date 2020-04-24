@@ -133,6 +133,34 @@ flags.DEFINE_integer(
 )
 
 
+def merge_from_min_id(out, seg, mask, min_new_id, scratch=None):
+    assert out.ndim == 3
+    assert seg.ndim == 1
+    assert out.size == seg.size
+    assert min_new_id > 0
+    # Write the segmentation into scratch
+    if scratch is not None:
+        assert scratch.ndim == 1
+        assert scratch.size == seg.size
+        scratch.fill(0)
+    else:
+        scratch = np.zeros(out.size, dtype=np.uint32)
+    scratch[mask] = seg[mask]
+    # Split CCs
+    segmentation.clean_up(scratch.reshape(out.shape))
+    # Linear ID space starting at min_new_id
+    relabeled, id_map = segmentation.make_labels_contiguous(scratch)
+    max_new_id = min_new_id + max(new_id for _, new_id in id_map)
+    assert max_new_id < np.iinfo(np.uint32).max
+    # Write new IDs and check invariant
+    scratch[mask] = min_new_id + relabeled[mask]
+    assert scratch.max() == max_new_id
+    logging.info(f"anb maxes? {scratch.max()}, {max_new_id}.")
+    # Write output and update ID invariant
+    out.flat[mask] = scratch[mask]
+    return max_new_id
+
+
 def seg_meet(a, b, min_new_id=1):
     if a.shape != b.shape:
         raise ValueError
@@ -155,30 +183,13 @@ def seg_meet(a, b, min_new_id=1):
     a_not_b = a_not_b.nonzero()
 
     # Output storage
-    out = np.zeros(a.shape, dtype=np.uint32)
+    out = np.zeros(orig_shape, dtype=np.uint32)
     scratch = np.empty(a.shape, dtype=np.uint32)
 
-    def merge_into_out(seg, mask, min_new_id):
-        # Write the segmentation into scratch
-        scratch.fill(0)
-        scratch[mask] = seg[mask]
-        # Split CCs
-        segmentation.clean_up(scratch.reshape(orig_shape))
-        # Linear ID space starting at min_new_id
-        relabeled, id_map = segmentation.make_labels_contiguous(scratch)
-        max_new_id = min_new_id + max(new_id for _, new_id in id_map)
-        assert max_new_id < np.iinfo(np.uint32).max
-        # Write new IDs and check invariant
-        scratch[mask] = min_new_id + relabeled[mask]
-        assert scratch.max() == max_new_id
-        logging.info(f"anb maxes? {scratch.max()}, {max_new_id}.")
-        # Write output and update ID invariant
-        out[a_not_b] = scratch[a_not_b]
-        return max_new_id + 1
-
-    min_new_id = merge_into_out(a, a_not_b, min_new_id)
-    min_new_id = merge_into_out(b, b_not_a, min_new_id)
-    min_new_id = merge_into_out(a, b_and_a, min_new_id)
+    # Perform the merges
+    new_max_id = merge_from_min_id(out, a, a_not_b, min_new_id, scratch=scratch)
+    new_max_id = merge_from_min_id(out, b, b_not_a, new_max_id + 1, scratch=scratch)
+    new_max_id = merge_from_min_id(out, a, b_and_a, new_max_id + 1, scratch=scratch)
 
     return out.reshape(orig_shape)
 
@@ -263,21 +274,14 @@ def merge_into_main(a, b, old_max_id, min_size=0):
     a_fg = a_fg.nonzero()
     b_not_a = b_not_a.nonzero()
 
-    # Clean / process B \ A and write
-    out = np.zeros(a.shape, dtype=np.uint32)
-    out[b_not_a] = b[b_not_a]
-    segmentation.clean_up(out.reshape(orig_shape), min_size=min_size)
-    relabeled, id_map = segmentation.make_labels_contiguous(out)
-    max_new_id = min_new_id + max(new_id for _, new_id in id_map)
-    assert max_new_id < np.iinfo(np.uint32).max
-    out[b_not_a] = min_new_id + relabeled[b_not_a]
-    assert out.max() == max_new_id
-    logging.info(f"maxes? {out.max()}, {max_new_id}, {old_max_id}.")
-
     # Write A
-    out[a_fg] = a[a_fg]
+    out = np.zeros(orig_shape, dtype=np.uint32)
+    out.flat[a_fg] = a[a_fg]
 
-    return out.reshape(orig_shape), max_new_id, old_max_id, b_not_a
+    # Clean / process B \ A and write
+    new_max_id = merge_from_min_id(out, b, b_not_a, min_new_id)
+
+    return out, new_max_id, old_max_id, b_not_a
 
 
 def _thread_main(subvolume__params):
