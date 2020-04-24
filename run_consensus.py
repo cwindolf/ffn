@@ -133,19 +133,15 @@ flags.DEFINE_integer(
 )
 
 
-def seg_meet(a, b):
+def seg_meet(a, b, min_new_id=1):
     if a.shape != b.shape:
         raise ValueError
     orig_shape = a.shape
+    assert min_new_id < np.iinfo(np.uint32).max
 
     # XXX Flat views because why again?
     a = a.ravel()
     b = b.ravel()
-
-    # Figure out min ID for new segments
-    a_max = a.max()
-    min_new_id = a_max + 1
-    assert min_new_id < np.iinfo(np.uint32).max
 
     # Boolean foreground / background masks
     a_fg = a != 0
@@ -158,33 +154,31 @@ def seg_meet(a, b):
     b_not_a = b_not_a.nonzero()
     a_not_b = a_not_b.nonzero()
 
-    # Clean / process B \ A and write
-    bna_out = np.zeros(a.shape, dtype=np.uint32)
-    bna_out[b_not_a] = b[b_not_a]
-    segmentation.clean_up(bna_out.reshape(orig_shape))
-    relabeled, id_map = segmentation.make_labels_contiguous(bna_out)
-    max_new_id = min_new_id + max(new_id for _, new_id in id_map)
-    assert max_new_id < np.iinfo(np.uint32).max
-    bna_out[b_not_a] = min_new_id + relabeled[b_not_a]
-    assert bna_out.max() == max_new_id
-    logging.info(f"bna maxes? {bna_out.max()}, {max_new_id}, {a_max}.")
-
-    # Clean / process B and A and write
-    both_out = np.zeros(a.shape, dtype=np.uint32)
-    both_out[b_and_a] = b[b_and_a]
-    segmentation.clean_up(both_out.reshape(orig_shape))
-    relabeled, id_map = segmentation.make_labels_contiguous(both_out)
-    max_new_id = min_new_id + max(new_id for _, new_id in id_map)
-    assert max_new_id < np.iinfo(np.uint32).max
-    both_out[b_and_a] = min_new_id + relabeled[b_and_a]
-    assert both_out.max() == max_new_id
-    logging.info(f"both maxes? {both_out.max()}, {max_new_id}, {a_max}.")
-
-    # Write output
+    # Output storage
     out = np.zeros(a.shape, dtype=np.uint32)
-    out[a_not_b] = a[a_not_b]
-    out[b_not_a] = bna_out[b_not_a]
-    out[b_and_a] = both_out[b_and_a]
+    scratch = np.empty(a.shape, dtype=np.uint32)
+
+    def merge_into_out(seg, mask, min_new_id):
+        # Write the segmentation into scratch
+        scratch.fill(0)
+        scratch[mask] = seg[mask]
+        # Split CCs
+        segmentation.clean_up(scratch.reshape(orig_shape))
+        # Linear ID space starting at min_new_id
+        relabeled, id_map = segmentation.make_labels_contiguous(scratch)
+        max_new_id = min_new_id + max(new_id for _, new_id in id_map)
+        assert max_new_id < np.iinfo(np.uint32).max
+        # Write new IDs and check invariant
+        scratch[mask] = min_new_id + relabeled[mask]
+        assert scratch.max() == max_new_id
+        logging.info(f"anb maxes? {scratch.max()}, {max_new_id}.")
+        # Write output and update ID invariant
+        out[a_not_b] = scratch[a_not_b]
+        return max_new_id + 1
+
+    min_new_id = merge_into_out(a, a_not_b, min_new_id)
+    min_new_id = merge_into_out(b, b_not_a, min_new_id)
+    min_new_id = merge_into_out(a, b_and_a, min_new_id)
 
     return out.reshape(orig_shape)
 
