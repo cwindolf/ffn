@@ -22,6 +22,7 @@ import itertools
 import numpy as np
 from multiprocessing.pool import ThreadPool
 
+import h5py
 from google.protobuf import text_format
 from absl import app
 from absl import flags
@@ -68,6 +69,24 @@ def _thread_main(runners_and_bbox):
     return time.time() - thread_start
 
 
+def get_outer_bbox(request):
+    outer_bbox_pb = bounding_box_pb2.BoundingBox()
+    if FLAGS.bounding_box:
+        with open(FLAGS.bounding_box) as bbox_f:
+            text_format.Parse(bbox_f.read(), outer_bbox_pb)
+        outer_bbox = bounding_box.BoundingBox(outer_bbox_pb)
+    else:
+        logging.info(
+            "You didn't give a bounding box. Trying to figure it out from "
+            "the data."
+        )
+        path, dset = request.hdf5.split(":")
+        with h5py.File(path, "r") as f:
+            size_xyz = f[dset].shape[::-1]
+        outer_bbox = bounding_box.BoundingBox(start=(0, 0, 0), size=size_xyz)
+    return outer_bbox
+
+
 def infer():
     requests = []
     for infreq_filename in FLAGS.inference_requests.split():
@@ -77,6 +96,7 @@ def infer():
         if not gfile.Exists(request.segmentation_output_dir):
             gfile.MakeDirs(request.segmentation_output_dir)
         requests.append(request)
+
 
     # Some asserts to make sure things don't go haywire
     batch_size = requests[0].batch_size
@@ -93,12 +113,7 @@ def infer():
     )
 
     # Global bounding box ---------------------------------------------
-    outer_bbox_pb = bounding_box_pb2.BoundingBox()
-    if FLAGS.bounding_box:
-        with open(FLAGS.bounding_box) as bbox_f:
-            text_format.Parse(bbox_f.read(), outer_bbox_pb)
-    # Cast to fancy bounding box with subvolume calculations
-    outer_bbox = bounding_box.BoundingBox(outer_bbox_pb)
+    outer_bbox = get_outer_bbox(requests[0])
     print(outer_bbox)
 
     # Subvolumes ------------------------------------------------------
@@ -216,11 +231,7 @@ def infer():
 
 
 def advise():
-    outer_bbox_pb = bounding_box_pb2.BoundingBox()
-    if FLAGS.bounding_box:
-        with open(FLAGS.bounding_box) as bbox_f:
-            text_format.Parse(bbox_f.read(), outer_bbox_pb)
-    outer_bbox = bounding_box.BoundingBox(outer_bbox_pb)
+    outer_bbox = get_outer_bbox()
     if FLAGS.subvolume_size < 0:
         svsize = outer_bbox.size
     else:
