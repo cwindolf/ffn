@@ -227,7 +227,7 @@ def split_merge_sv(subvolume, segmentation_dirs, min_ffn_size):
     return tuple(reversed(subvolume.to_slice())), seg
 
 
-def merge_into_main(a, b, old_max_id, min_size=0):
+def merge_into_main(a, b, old_max_id):
     """Merge a new segmentation `b` into the large vol
 
     Merge keeps `a` fixed, and inserts segments from `b` into the
@@ -248,6 +248,12 @@ def merge_into_main(a, b, old_max_id, min_size=0):
         The new segmentation for that subvolume
     old_max_id : int
         The maximum ID in the main volume
+
+    # Old kwarg that could be nice to have again.
+    # I decided that model SVs should be discarded
+    # rather than post-split ones, since these
+    # post-split could just need a merge to be
+    # happy.
     min_size : int
         Min # of voxels for new bodies after split
 
