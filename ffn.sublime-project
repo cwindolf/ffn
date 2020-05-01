@@ -1,32 +1,39 @@
 {
-    "build_systems":
-    [
-        {
-            "cmd": ["black", "-l", "79", "$file"],
-            "name": "Black",
-            "selector": "source.python",
-            "file_regex": "^\\s*File \"(...*?)\", line ([0-9]*)"
-        },
-        {
-            "file_regex": "^[ ]*File \"(...*?)\", line ([0-9]*)",
-            "name": "Anaconda Python Builder",
-            "selector": "source.python",
-            "shell_cmd": "\"/Users/cwindolf/opt/miniconda3/envs/sory/bin/python3\" -u \"$file\""
-        },
-    ],
-    "folders":
-    [
-        {
-            "path": "."
-        }
-    ],
-    "settings":
-    {
-        "pep8_ignore":
-        [
-            "E309",
-            "E203",
-        ],
-        "python_interpreter": "~/opt/miniconda3/envs/ffnx/bin/python3",
-    }
+	"build_systems":
+	[
+		{
+			"cmd":
+			[
+				"black",
+				"-l",
+				"79",
+				"$file"
+			],
+			"file_regex": "^\\s*File \"(...*?)\", line ([0-9]*)",
+			"name": "Black",
+			"selector": "source.python"
+		},
+		{
+			"file_regex": "^[ ]*File \"(...*?)\", line ([0-9]*)",
+			"name": "Anaconda Python Builder",
+			"selector": "source.python",
+			"shell_cmd": "\"/Users/cwindolf/opt/miniconda3/envs/a/bin/python3\" -u \"$file\""
+		}
+	],
+	"folders":
+	[
+		{
+			"path": "."
+		}
+	],
+	"settings":
+	{
+		"pep8_ignore":
+		[
+			"E309",
+			"E203",
+			"E111",
+		],
+		"python_interpreter": "~/opt/miniconda3/envs/ffnx/bin/python3"
+	}
 }
