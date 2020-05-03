@@ -1,4 +1,4 @@
-"""
+r"""
 Please observe that the split oversegmentation operation forms
 an abelian group on the set of segmentations. So, it doesn't
 matter if we first apply the split consensus to merge subvols
@@ -126,11 +126,11 @@ flags.DEFINE_string("outspec", None, "hdf5 spec to write to.")
 flags.DEFINE_integer(
     "min_ffn_size", 0, "Minimum segment size to consider ffn output viable"
 )
-flags.DEFINE_integer(
-    "min_split_size",
-    0,
-    "Minimum segment size to consider split consensus output viable",
-)
+# flags.DEFINE_integer(
+#    "min_split_size",
+#    0,
+#    "Minimum segment size to consider split consensus output viable",
+# )
 
 
 def merge_from_min_id(out, seg, mask, min_new_id, scratch=None):
@@ -304,7 +304,6 @@ def _thread_main(subvolume__params):
     subvolume, params = subvolume__params
     segmentation_dirs = params["segmentation_dirs"]
     min_ffn_size = params["min_ffn_size"]
-    min_split_size = params["min_split_size"]
 
     # Split consensus in subvoume
     logging.info("Calling split consensus")
@@ -324,7 +323,7 @@ def _thread_main(subvolume__params):
 
     logging.info("Merging with main")
     merge, sv_max_id, sv_old_max_id, new_mask = merge_into_main(
-        cur_seg_out, result, old_max_id=0, min_size=min_split_size
+        cur_seg_out, result, old_max_id=0,
     )
 
     logging.info("Returning.")
@@ -427,7 +426,6 @@ def main(_):
     thread_params = {
         "segmentation_dirs": FLAGS.segmentation_dirs,
         "min_ffn_size": FLAGS.min_ffn_size,
-        "min_split_size": FLAGS.min_split_size,
     }
 
     # This is the only writeable reference to our output file.
