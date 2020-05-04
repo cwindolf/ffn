@@ -97,7 +97,6 @@ def infer():
             gfile.MakeDirs(request.segmentation_output_dir)
         requests.append(request)
 
-
     # Some asserts to make sure things don't go haywire
     batch_size = requests[0].batch_size
     assert all(r.batch_size == batch_size for r in requests)

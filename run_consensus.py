@@ -154,6 +154,7 @@ def merge_from_min_id(out, seg, mask, min_new_id, scratch=None):
     assert max_new_id < np.iinfo(np.uint32).max
     # Write new IDs and check invariant
     scratch[mask] = min_new_id + relabeled[mask]
+    print(scratch.max(), max_new_id)
     assert scratch.max() == max_new_id
     # Write output and update ID invariant
     out.flat[mask] = scratch[mask]
