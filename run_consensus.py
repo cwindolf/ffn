@@ -133,7 +133,7 @@ flags.DEFINE_integer(
 # )
 
 
-def merge_from_min_id(out, seg, mask, min_new_id, scratch=None):
+def merge_from_min_id(out, seg, mask, min_new_id, scratch=None, tag=""):
     assert out.ndim == 3
     assert seg.ndim == 1
     assert out.size == seg.size
@@ -154,7 +154,7 @@ def merge_from_min_id(out, seg, mask, min_new_id, scratch=None):
     assert max_new_id < np.iinfo(np.uint32).max
     # Write new IDs and check invariant
     scratch[mask] = min_new_id + relabeled[mask]
-    print(scratch.max(), max_new_id)
+    print(tag, min_new_id, scratch.max(), max_new_id, id_map)
     assert scratch.max() == max_new_id
     # Write output and update ID invariant
     out.flat[mask] = scratch[mask]
@@ -195,9 +195,9 @@ def seg_meet(a, b, min_new_id=1):
     out = np.zeros(orig_shape, dtype=np.uint32)
     scratch = np.empty(a.shape, dtype=np.uint32)
     # Perform the merges
-    new_max_id = merge_from_min_id(out, a, a_not_b, min_new_id, scratch=scratch)
-    new_max_id = merge_from_min_id(out, b, b_not_a, new_max_id + 1, scratch=scratch)
-    new_max_id = merge_from_min_id(out, a, b_and_a, new_max_id + 1, scratch=scratch)
+    new_max_id = merge_from_min_id(out, a, a_not_b, min_new_id, scratch=scratch, tag="a_not_b")
+    new_max_id = merge_from_min_id(out, b, b_not_a, new_max_id + 1, scratch=scratch, tag="b_not_a")
+    new_max_id = merge_from_min_id(out, a, b_and_a, new_max_id + 1, scratch=scratch, tag="both")
     assert new_max_id < np.iinfo(np.uint32).max
 
     logging.info(f"seg_meet max id {new_max_id}")
