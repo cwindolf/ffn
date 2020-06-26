@@ -27,6 +27,6 @@ setup(
         'tensorflow',
         'h5py',
         'pillow',
-        'absl-py', 'absl'
+        'absl-py',
     ],
 )
