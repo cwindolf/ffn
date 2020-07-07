@@ -6,6 +6,9 @@ Basically, these just call `srun` on the runner scripts in
 the root of this repo.
 """
 from pathlib import Path
+import subprocess
+import sys
+import time
 
 from tensorflow import gfile
 from google.protobuf import text_format
@@ -29,10 +32,10 @@ default_slurm_kwargs = {
 # the functions below batch out to scripts in the ffn root. we find
 # that by inspecting the ffn module.
 # __file__ will be .../ffn/ffn/__init__.py__, we want .../ffn/.
-ffnpath = Path(ffn.__file__).parent.parent.resolve()
+ffnpath = Path(ffn.__file__).parent.parent
 
 
-def srun_inference(infreq, bbox, **slurm_kwargs):
+def srun_inference(infreq, bbox, local=False, slurm_kwargs=None):
     """Run an inference job on a Slurm node.
 
     Arguments
@@ -41,17 +44,14 @@ def srun_inference(infreq, bbox, **slurm_kwargs):
         An InferenceRequest proto in its string representation.
     bbox : str
         A BoundingBox proto in its string representation.
+    local : bool
+        Run locally rather than on a Slurm node.
 
     Returns
     -------
     seg_dir : str
         The `segmentation_output_dir` field of the InferenceRequest.
     """
-    sargs = default_slurm_kwargs.copy()
-    sargs.update((k, str(v)) for k, v in slurm_kwargs.items())
-    if "--job-name" not in sargs and "-J" not in sargs:
-        sargs["--job-name"]
-
     # -- bail out early
     # Will bail under the same circumstances that ffn Runner does.
     # Copied from `Runner.run` method.
@@ -66,5 +66,58 @@ def srun_inference(infreq, bbox, **slurm_kwargs):
     corner = (bbox_pb.start.z, bbox_pb.start.y, bbox_pb.start.x)
     seg_path = storage.segmentation_path(seg_dir, corner)
     if gfile.Exists(seg_path):
-        print(f'{seg_path} already exists.')
+        print(f"{seg_path} already exists.")
         return seg_dir
+
+    # -- process srun arguments
+    sargs = default_slurm_kwargs.copy()
+    sargs.update((k, str(v)) for k, v in slurm_kwargs.items() if v)
+    if "--job-name" not in sargs and "-J" not in sargs:
+        sargs["--job-name"] = f"inf{bbox_pb.size.x}"
+
+    # -- build command line
+    wrapper = []
+    if not local:
+        wrapper = ["srun"]
+        for k, v in sargs.items():
+            wrapper += [k, v]
+    inference_cmd = [
+        "python",
+        ffnpath.joinpath("run_inference.py").resolve(),
+        '--inference_request',
+        infreq,
+        '--bounding_box',
+        bbox,
+    ]
+
+    # -- run and make sure process exits
+    process = subprocess.run(
+        wrapper + inference_cmd,
+        stderr=subprocess.STDOUT,
+        stdout=subprocess.PIPE,
+    )
+
+    # read output until we see that process is done
+    # they hang sometimes and can need multiple sigterms
+    # because of srun.
+    for bline in iter(process.stdout.readline, ''):
+        line = bline.decode(sys.stdout.encoding).strip()
+        if line:
+            print(line, flush=True)
+            if 'terminating' in line:
+                print('>>> Process seems to be done.')
+                print('>>> Waiting for a bit and then killing.')
+                time.sleep(60.0)
+                process.kill()
+                time.sleep(30.0)
+                if process.poll() is None:
+                    process.kill()
+                    process.kill()
+                time.sleep(5.0)
+                print('Killed? poll:', process.poll())
+    print(f'Done with {seg_path}...')
+
+    return seg_dir
+
+
+def srun_multiple_inference
