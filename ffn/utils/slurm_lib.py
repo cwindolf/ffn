@@ -100,7 +100,7 @@ def srun_inference(infreq, bbox, local=False, slurm_kwargs=None):
             wrapper += [k, v]
     inference_cmd = [
         "python",
-        ffnpath.joinpath("run_inference.py").resolve(),
+        str(ffnpath.joinpath("run_inference.py").resolve()),
         '--inference_request',
         infreq,
         '--bounding_box',
