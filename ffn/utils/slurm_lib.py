@@ -168,9 +168,9 @@ def srun_multiple_inferences(
     n_infreqs = len(infreqs)
 
     # -- load up protos if they are files
-    if Path(infreqs[0]).is_file():
+    if infreqs[0].endswith(".pbtxt"):
         infreqs = [_readfile(fn) for fn in infreqs]
-    if Path(bboxes[0]).is_file():
+    if bboxes[0].endswith(".pbtxt"):
         infreqs = [_readfile(fn) for fn in infreqs]
 
     # broadcast bboxes
