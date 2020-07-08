@@ -181,8 +181,8 @@ def srun_multiple_inferences(
     job_args = zip(
         infreqs,
         bboxes,
-        (local for _ in range(n_infreqs))
-        (slurm_kwargs for _ in range(n_infreqs))
+        (local for _ in range(n_infreqs)),
+        (slurm_kwargs for _ in range(n_infreqs)),
     )
 
     if n_workers < 1:
