@@ -182,7 +182,12 @@ def main(_):
                     for d in os.listdir(FLAGS.forward_dir)
                     if name in d and str(ckpt_inds[i]) in d
                 ]
-                assert len(forward_dir) == 1
+                if len(forward_dir) != 1:
+                    raise ValueError(
+                        "Found", len(forward_dir), "candidates for"
+                        "forward directory for ckpt", name, ckpt_inds[i],
+                        "which were", forward_dir
+                    )
                 forward_dir = join(FLAGS.forward_dir, forward_dir[0])
                 # filter on existence of forward segmentation
                 if glob.glob(join(forward_dir, "*/*/seg*.npz")):
