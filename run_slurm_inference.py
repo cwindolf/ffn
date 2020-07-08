@@ -160,7 +160,8 @@ def main(_):
     if ckpts:
         # Parse prototype infreq
         inf = inference_pb2.InferenceRequest()
-        text_format.Parse(open(FLAGS.infreqs[0]).read(), inf)
+        inftext = ' '.join(open(FLAGS.infreqs[0], 'r').read().split())
+        text_format.Parse(inftext, inf)
 
         # Make inference requests for each of these
         infreqs = []
