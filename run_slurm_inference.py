@@ -170,7 +170,7 @@ def main(_):
             inf.model_checkpoint_path = c
             # patch output path
             nbatch = re.findall(r"\d+", c)[-1]
-            subfolder = f"{name}_{nbatch}_res" if name else f"{nbatch}_res"
+            subfolder = f"{nbatch}_res"
             inf.segmentation_output_dir = join(
                 abspath(FLAGS.out_dir), subfolder
             )
@@ -180,7 +180,7 @@ def main(_):
                 forward_dir = [
                     d
                     for d in os.listdir(FLAGS.forward_dir)
-                    if name in d and str(ckpt_inds[i]) in d
+                    if str(ckpt_inds[i]) in d
                 ]
                 if len(forward_dir) != 1:
                     raise ValueError(
