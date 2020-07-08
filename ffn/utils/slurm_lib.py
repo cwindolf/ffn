@@ -171,7 +171,7 @@ def srun_multiple_inferences(
     if infreqs[0].endswith(".pbtxt"):
         infreqs = [_readfile(fn) for fn in infreqs]
     if bboxes[0].endswith(".pbtxt"):
-        infreqs = [_readfile(fn) for fn in infreqs]
+        bboxes = [_readfile(fn) for fn in bboxes]
 
     # broadcast bboxes
     if len(bboxes) == 1:
