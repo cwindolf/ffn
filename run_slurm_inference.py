@@ -216,7 +216,7 @@ def main(_):
         infreqs,
         FLAGS.bboxes,
         local=FLAGS.where == "local",
-        slurm_kwargs={"-t", FLAGS.t},
+        slurm_kwargs={"-t": FLAGS.t},
     )
     print("Ok, all done. Segs have been saved to:")
     print("\n".join(res_dirs))
