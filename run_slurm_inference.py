@@ -182,7 +182,9 @@ def main(_):
                     for d in os.listdir(FLAGS.forward_dir)
                     if str(ckpt_inds[i]) in d
                 ]
-                if len(forward_dir) != 1:
+                if len(forward_dir) == 0:
+                    continue
+                if len(forward_dir) > 1:
                     raise ValueError(
                         "Found", len(forward_dir), "candidates for"
                         "forward directory for ckpt", name, ckpt_inds[i],
