@@ -69,7 +69,7 @@ def launcher(train_flags, optimizer_flags):
             '--exclusive',
             # Launch nodes
             'python',
-            'secgan_slurm_buddy.py',
+            'slurm_train_secgan.py',
             '--run_name',
             FLAGS.run_name,
             '--role',

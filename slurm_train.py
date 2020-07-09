@@ -79,7 +79,7 @@ def main(argv):
          '--exclusive',
 
          # trainer script and its args
-         'python', 'slurm_node.py',
+         'python', 'slurm_helper_scripts/slurm_ffn_train_node.py',
          '--num_ps', str(FLAGS.num_ps),
          '--ps_port', FLAGS.ps_port,
          '--worker_port_min', FLAGS.worker_port_min,
