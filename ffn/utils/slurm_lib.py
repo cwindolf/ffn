@@ -99,14 +99,14 @@ def srun_inference(infreq, bbox, local=False, slurm_kwargs=None):
     inference_cmd = [
         "python",
         "run_inference.py",
-        '--inference_request',
+        "--inference_request",
         infreq,
-        '--bounding_box',
+        "--bounding_box",
         bbox,
     ]
 
     # -- run and make sure process exit
-    print("Running:", wrapper + inference_cmd)
+    print("Running:", repr(wrapper + inference_cmd))
     process = subprocess.run(
         wrapper + inference_cmd,
         stderr=subprocess.STDOUT,
