@@ -17,7 +17,6 @@ from google.protobuf import text_format
 from ffn.inference import inference_pb2
 from ffn.utils import bounding_box_pb2
 from ffn.inference import storage
-import ffn
 
 
 # -- constants
@@ -33,11 +32,6 @@ default_slurm_kwargs = {
     '--constraint': 'v100',
     "-c": "8",
 }
-
-# the functions below batch out to scripts in the ffn root. we find
-# that by inspecting the ffn module.
-# __file__ will be .../ffn/ffn/__init__.py__, we want .../ffn/.
-ffnpath = Path(ffn.__file__).parent.parent
 
 
 # -- helpers
@@ -104,7 +98,7 @@ def srun_inference(infreq, bbox, local=False, slurm_kwargs=None):
             wrapper += [k, v]
     inference_cmd = [
         "python",
-        str(ffnpath.joinpath("run_inference.py").resolve()),
+        "run_inference.py",
         '--inference_request',
         infreq,
         '--bounding_box',
