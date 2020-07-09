@@ -43,7 +43,6 @@ subcommand.
         $ python run_resegmentation.py post_automerge --help
 """
 import argparse
-import collections
 import datetime
 import json
 import logging
@@ -357,7 +356,7 @@ def analyze_results(reseg_req_path, affinities_npy, bigmem, nthreads):
         )
 
         # Analyze...
-        pair_resegmentation_result = resegmentation_analysis.evaluate_pair_resegmentation(
+        pair_resegmentation_result = resegmentation_analysis.evaluate_pair_resegmentation(  # noqa
             target_path,
             init_segmentation,
             reseg_radius,
