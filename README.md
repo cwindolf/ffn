@@ -3,8 +3,8 @@
 This is a fork of [google/ffn](https://github.com/google/ffn) with some
 details filled in for a more complete segmentation pipeline in a SLURM
 environment. It also includes an implementation of the FFN authors'
-[segmentation-enhanced CycleGAN](https://www.biorxiv.org/content/
-10.1101/548081v1) for use in domain transfer problems with this repo's
+[segmentation-enhanced CycleGAN](https://biorxiv.org/content/10.1101/548081v1)
+for use in domain transfer problems with this repo's
 FFN implementation. The below README will reflect the changes from the
 original repo.
 
@@ -200,3 +200,19 @@ Affinities can be generated in an FFN-guided fashion using the script
 optionally compute and post an automatic merge to a DVID server. It uses
 the FFN repo's "resegmentation" infrastructure to do this, see the script
 and the `ffn/inference/resegmentation*` files for more info.
+
+
+# Segmentation-enhanced CycleGAN
+
+This repo contains a sort of experimental, but working, implementation of
+[segmentation-enhanced CycleGAN](https://biorxiv.org/content/10.1101/548081v1),
+specifically for use in the domain transfer problem of applying an FFN
+trained on one dataset to the segmentation of another dataset.
+
+That problem is framed as an image translation problem: we try to learn a
+mapping that transforms the target image stack into a representation that
+mimics the source image stack, such that an FFN model can segment it.
+
+To train such a model, see `train_secgan.py` and `slurm_train_secgan.py`.
+To apply it, see `run_secgan_xfer.py`. Note that to train a SECGAN, it's
+necessary to have a trained FFN ready.
