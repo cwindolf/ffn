@@ -2,10 +2,13 @@
 
 See docs for ffn/utils/h5_consensus.py and the function
 `h5_meet_consensus` in that file for more details.
+
+To run lots of consensuses, I think it's easiest to mimic
+the call to `h5_consensus.hdf5_meet_consensus` below in a
+loop in an IPython session.
 """
 import argparse
 from ffn.utils import h5_consensus
-
 
 # -- args
 ap = argparse.ArgumentParser()
@@ -26,7 +29,6 @@ ap.add_argument(
     help="Minimum size segment to allow when loading inferences.",
 )
 args = ap.parse_args()
-
 
 # -- run it
 h5_consensus.hdf5_meet_consensus(
