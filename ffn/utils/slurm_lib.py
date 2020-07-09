@@ -106,14 +106,12 @@ def srun_inference(infreq, bbox, local=False, slurm_kwargs=None):
     ]
 
     # -- run and make sure process exit
-    print("Running:", repr(wrapper + inference_cmd))
-    process = subprocess.run(
+    process = subprocess.Popen(
         wrapper + inference_cmd,
         stdin=subprocess.DEVNULL,
         stderr=subprocess.STDOUT,
         stdout=subprocess.PIPE,
     )
-    print(process.poll(), process)
 
     # read output until we see that process is done
     # they hang sometimes and can need multiple sigterms
