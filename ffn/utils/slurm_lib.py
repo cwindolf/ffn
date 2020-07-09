@@ -88,7 +88,7 @@ def srun_inference(infreq, bbox, local=False, slurm_kwargs=None):
     # -- process srun arguments
     sargs = default_slurm_kwargs.copy()
     if slurm_kwargs:
-        sargs.update((k, str(v)) for k, v in slurm_kwargs.items() if v)
+        sargs.update((k, v) for k, v in slurm_kwargs.items() if v)
     if "--job-name" not in sargs and "-J" not in sargs:
         sargs["--job-name"] = f"inf{bbox_pb.size.x}"
 
