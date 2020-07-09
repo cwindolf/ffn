@@ -116,7 +116,7 @@ def srun_inference(infreq, bbox, local=False, slurm_kwargs=None):
     process = subprocess.run(
         wrapper + inference_cmd,
         stderr=subprocess.STDOUT,
-        stdout=subprocess.PIPE,
+        stdout=subprocess.STDOUT,
     )
     print(process.poll(), process)
 
