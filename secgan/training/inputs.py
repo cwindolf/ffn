@@ -1,8 +1,10 @@
+import logging
+
 import numpy as np
 from scipy.special import logit
 from skimage.util import view_as_windows
-import ppx.data_util as dx
-import logging
+
+import ffn.utils.datspec as dx
 
 
 def fixed_seed_batch(

@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-import ppx.data_util as dx
+import ffn.utils.datspec as dx
 from secgan.models import SECGAN
 
 

@@ -1,12 +1,15 @@
+import logging
+
+from absl import flags
+from absl import app
 import numpy as np
 import tensorflow as tf
-import ppx.data_util as dx
+
+import ffn.utils.datspec as dx
+
 from secgan import models
 from secgan.training import inputs
 from secgan.util import whiten
-import logging
-from absl import flags
-from absl import app
 
 
 # ------------------------------- lib ---------------------------------
