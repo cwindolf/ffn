@@ -29,7 +29,8 @@ default_slurm_kwargs = {
     "-n": "1",
     "-N": "1",
     "-p": "gpu",
-    "--gres": "gpu:v100-32gb:1",
+    "--gres": "gpu:1",
+    '--constraint': 'v100',
     "-c": "8",
 }
 
@@ -68,6 +69,7 @@ def srun_inference(infreq, bbox, local=False, slurm_kwargs=None):
     seg_dir : str
         The `segmentation_output_dir` field of the InferenceRequest.
     """
+
     # -- bail out early
     # Will bail under the same circumstances that ffn Runner does.
     # Copied from `Runner.run` method.
@@ -84,6 +86,8 @@ def srun_inference(infreq, bbox, local=False, slurm_kwargs=None):
     if gfile.Exists(seg_path):
         print(f"{seg_path} already exists.")
         return seg_dir
+
+    print("Starting worker for ", seg_dir)
 
     # -- process srun arguments
     sargs = default_slurm_kwargs.copy()
@@ -107,12 +111,14 @@ def srun_inference(infreq, bbox, local=False, slurm_kwargs=None):
         bbox,
     ]
 
-    # -- run and make sure process exits
+    # -- run and make sure process exit
+    print("Running:", wrapper + inference_cmd)
     process = subprocess.run(
         wrapper + inference_cmd,
         stderr=subprocess.STDOUT,
         stdout=subprocess.PIPE,
     )
+    print(process.poll(), process)
 
     # read output until we see that process is done
     # they hang sometimes and can need multiple sigterms
