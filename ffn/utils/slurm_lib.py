@@ -108,10 +108,10 @@ def srun_inference(infreq, bbox, local=False, slurm_kwargs=None):
     # -- run and make sure process exit
     print("Running:", repr(wrapper + inference_cmd))
     process = subprocess.run(
-        # wrapper + inference_cmd,
-        ["srun", "echo", "hi"],
-        stderr=subprocess.STDOUT,
-        stdout=subprocess.STDOUT,
+        wrapper + inference_cmd,
+        # ["srun", "echo", "hi"],
+        # stderr=subprocess.STDOUT,
+        # stdout=subprocess.STDOUT,
     )
     print(process.poll(), process)
 
