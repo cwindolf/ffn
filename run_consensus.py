@@ -6,6 +6,7 @@ See docs for ffn/utils/h5_consensus.py and the function
 import argparse
 from ffn.utils import h5_consensus
 
+
 # -- args
 ap = argparse.ArgumentParser()
 ap.add_argument("out_fn", help="Path to hdf5 to write to. Must not exist.")
@@ -25,6 +26,7 @@ ap.add_argument(
     help="Minimum size segment to allow when loading inferences.",
 )
 args = ap.parse_args()
+
 
 # -- run it
 h5_consensus.hdf5_meet_consensus(
