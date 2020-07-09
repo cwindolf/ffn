@@ -54,7 +54,7 @@ from google.protobuf import text_format
 import yaml
 
 from ffn.inference import inference_pb2
-from ffn.utils import slurm_lib
+from ffn.slurm import sinference
 
 
 flags.DEFINE_spaceseplist(
@@ -213,7 +213,7 @@ def main(_):
             infreqs.append(infreq_text)
 
     # -- run
-    res_dirs = slurm_lib.srun_multiple_inferences(
+    res_dirs = sinference.srun_multiple_inferences(
         infreqs,
         FLAGS.bboxes,
         local=FLAGS.where == "local",
