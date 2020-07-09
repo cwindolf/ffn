@@ -1,5 +1,15 @@
 # Flood-Filling Networks
 
+This is a fork of [google/ffn](https://github.com/google/ffn) with some
+details filled in for a more complete segmentation pipeline in a SLURM
+environment. It also includes an implementation of the FFN authors'
+[segmentation-enhanced CycleGAN](https://www.biorxiv.org/content/
+10.1101/548081v1) for use in domain transfer problems with this repo's
+FFN implementation. The below README will reflect the changes from the
+original repo.
+
+# About FFN
+
 Flood-Filling Networks (FFNs) are a class of neural networks designed for
 instance segmentation of complex and large shapes, particularly in volume
 EM datasets of brain tissue.
@@ -9,23 +19,36 @@ For more details, see the related publications:
  * https://arxiv.org/abs/1611.00421
  * https://doi.org/10.1101/200675
 
-This is not an official Google product.
+This is most definitely not an official Google product.
 
 # Installation
 
-No installation is required. To install the necessary dependencies, run:
+To install the necessary dependencies, run:
 
 ```shell
   pip install -r requirements.txt
 ```
 
 The code has been tested on an Ubuntu 16.04.3 LTS system equipped with a
-Tesla P100 GPU.
+Tesla P100 GPU, and on a SLURM cluster with V100 GPUs.
+
+Some scripts require that the `ffn` and `secgan` modules be installed
+with
+
+```shell
+  python setup.py develop
+```
+
+or equivalent.
 
 # Training
 
 FFN networks can be trained with the `train.py` script, which expects a
 TFRecord file of coordinates at which to sample data from input volumes.
+
+In SLURM clusters, `slurm_train.py` should be used for distributed training
+with asynchronous SGD. The API is similar to `train.py` and the data
+preparation steps are still required.
 
 ## Preparing the training data
 
@@ -100,9 +123,7 @@ notebook. Training the FFN as configured above requires a GPU with 12 GB of RAM.
 You can reduce the batch size, model depth, `fov_size`, or number of features in
 the convolutional layers to reduce the memory usage.
 
-The training script is not configured for multi-GPU or distributed training.
-For instructions on how to set this up, see the documentation on
-[Distributed TensorFlow](https://www.tensorflow.org/deploy/distributed#replicated_training).
+For multi-GPU or distributed training, see `slurm_train.py`.
 
 # Inference
 
@@ -127,7 +148,7 @@ In Python, you can load the segmentation as follows:
 ```
 
 We provide sample segmentation results in `results/fib25/sample-training2.npz`.
-For the training2 volume, segmentation takes ~7 min with a P100 GPU.
+For the training2 volume, segmentation takes about 7 min with a P100 GPU.
 
 For an interactive setting, check out `ffn_inference_demo.ipynb`. This Jupyter
 notebook shows how to segment a single object with an explicitly defined
@@ -135,3 +156,47 @@ seed and visualize the results while inference is running.
 
 Both examples are configured to use a 3d convstack FFN model trained on the
 `validation1` volume of the FIB-25 dataset from the FlyEM project at Janelia.
+
+## Data- and model-parallel inference
+
+To run inference on the same (small) region for many models at once on a
+SLURM cluster, try `run_slurm_inference.py` and see `ffn/slurm/sinference.py`.
+This is useful for checkpoint selection.
+
+To run parallel inference on a large region by chunking it into overlapping
+subvolumes, try `run_batch_inference.py`. This is helpful for scaling up to
+larger regions than single-threaded inference can support. It supports
+parallelism within a single GPU and across multiple GPUs by a simple work
+division strategy.
+
+## Combining multiple inferences
+
+After running multiple inferences of the same volume, or after running an
+inference over a region that has been chunked into many subvolumes, you
+can combine those inferences using `run_consensus.py`.
+
+For instance, say that you have run `M` inferences of the same region (for
+example, forward inferences with `PolicyPeaks` and reverse inferences with
+`PolicyInvertOrigins`, or for another example, multiple inferences of the
+same region with multiple models). Also, you may have chunked that region
+into `N` overlapping cubes with `run_batch_inference.py`.
+
+In that situation, `run_consensus.py` will compute the "meet" (i.e. it will
+combine all of the splits) over the `M` inferences for each subvolume. Then,
+the `N` subvolumes will be combined by a simple procedure into one large
+volume, which will be stored in an HDF5 file.
+
+# Affinities
+
+To facilitate proofreading of a large volume, it may be necessary to first
+oversegment that volume (possibly by combining all splits from multiple
+inferences with `run_consensus.py`), and then compute "affinities" between
+the supervoxels in the oversegmentation. Those supervoxels can be used to
+generate an initial automatic merge, which can be proofread more easily
+by using a tool like [neuclease](https://github.com/janelia-flyem/neuclease).
+
+Affinities can be generated in an FFN-guided fashion using the script
+`run_resegmentation.py`. That script allows you to compute affinities and
+optionally compute and post an automatic merge to a DVID server. It uses
+the FFN repo's "resegmentation" infrastructure to do this, see the script
+and the `ffn/inference/resegmentation*` files for more info.
