@@ -156,6 +156,7 @@ def hdf5_meet_consensus(
                 for (
                     merge, sv_max_id, sv_old_max_id, new_mask, subvol_slice
                 ) in pool.imap_unordered(_h5_consensus_thread_main, tier):
+                    logging.info(f"Merging in {subvol_slice}")
                     # -- contiguous ID space logic
                     # done on the main thread since it's hard to parallelize
                     max_id = seg_outf["max_id"][0]
