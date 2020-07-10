@@ -141,11 +141,8 @@ def seg_meet(a, b, min_new_id=1):
     """
     if a.shape != b.shape:
         raise ValueError("Segmentations had different shapes.")
-    orig_shape = a.shape
     assert min_new_id < np.iinfo(np.uint32).max
     # Boolean foreground / background masks
-    a = a.ravel()
-    b = b.ravel()
     a_fg = a != 0
     b_fg = b != 0
     b_and_a = np.logical_and(b_fg, a_fg)
@@ -156,7 +153,7 @@ def seg_meet(a, b, min_new_id=1):
     b_not_a = b_not_a.nonzero()
     a_not_b = a_not_b.nonzero()
     # Output storage
-    out = np.zeros(orig_shape, dtype=np.uint32)
+    out = np.zeros(a.shape, dtype=np.uint32)
     scratch = np.empty(a.shape, dtype=np.uint32)
     # Perform the merges
     new_max_id = merge_from_min_id(
@@ -172,7 +169,7 @@ def seg_meet(a, b, min_new_id=1):
 
     logging.info(f"seg_meet max id {new_max_id}")
 
-    return out.reshape(orig_shape)
+    return out
 
 
 # -- asymmetric merge, not in-place
