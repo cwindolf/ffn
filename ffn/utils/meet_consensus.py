@@ -284,5 +284,5 @@ def load_and_compute_meet(segmentation_dirs, subvolume=None, min_ffn_size=0):
         assert seg.shape == seg_b.shape
         seg = seg_meet(seg, seg_b.astype(np.uint64))
 
-    subvol_slice = tuple(reversed(subvolume.to_slice())),
+    subvol_slice = tuple(reversed(subvolume.to_slice()))
     return subvol_slice, seg

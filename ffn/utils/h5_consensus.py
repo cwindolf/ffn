@@ -19,14 +19,6 @@ from ffn.utils import meet_consensus
 from ffn.utils import subvols
 
 
-def _h5_tuple_slice_3d(h5data, slicer):
-    """h5 seems to be having trouble with these slices. helping it out.
-    """
-    assert all(not s.step for s in slicer)
-    a, b, c = slicer
-    return h5data[a.start:a.stop, b.start:b.stop, c.start:c.stop]
-
-
 # -- threading helpers for main HDF5 consensus routine
 
 
@@ -52,7 +44,7 @@ def _h5_consensus_thread_main(subvolume):
     # ID space on its own, it's the only place where enough info is present
     logging.info(f"Merging with main at {subvolume.start}")
     merge, sv_max_id, sv_old_max_id, new_mask = meet_consensus.paste_new_seg(
-        _h5_tuple_slice_3d(consensus_data, subvol_slice), meet_result
+        consensus_data[subvol_slice], meet_result
     )
 
     return merge, sv_max_id, sv_old_max_id, new_mask, subvol_slice
