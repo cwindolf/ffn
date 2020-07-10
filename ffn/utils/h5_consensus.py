@@ -43,6 +43,7 @@ def _h5_consensus_thread_main(subvolume):
     # the IDs are there so that the main thread can deal with the contiguous
     # ID space on its own, it's the only place where enough info is present
     logging.info(f"Merging with main at {subvolume.start}")
+    logging.info(f"Slice is {subvol_slice}")
     merge, sv_max_id, sv_old_max_id, new_mask = meet_consensus.paste_new_seg(
         consensus_data[subvol_slice], meet_result
     )
@@ -156,7 +157,6 @@ def hdf5_meet_consensus(
                 for (
                     merge, sv_max_id, sv_old_max_id, new_mask, subvol_slice
                 ) in pool.imap_unordered(_h5_consensus_thread_main, tier):
-                    logging.info(f"Merging in {subvol_slice}")
                     # -- contiguous ID space logic
                     # done on the main thread since it's hard to parallelize
                     max_id = seg_outf["max_id"][0]
