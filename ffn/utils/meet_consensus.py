@@ -102,20 +102,17 @@ def merge_from_min_id(out, seg, mask, min_new_id, scratch=None):
     """Write seg[mask] into out[mask] using a new contiguous ID
     space starting from min_new_id.
     """
-    assert out.ndim == 3
-    assert seg.ndim == 1
-    assert out.size == seg.size
+    assert out.shape == seg.shape
     assert min_new_id > 0
     # Write the segmentation into scratch
     if scratch is not None:
-        assert scratch.ndim == 1
-        assert scratch.size == seg.size
+        assert scratch.shape == seg.shape
         scratch.fill(0)
     else:
-        scratch = np.zeros(out.size, dtype=np.uint32)
+        scratch = np.zeros(out.shape, dtype=np.uint32)
     scratch[mask] = seg[mask]
     # Split CCs
-    segmentation.clean_up(scratch.reshape(out.shape))
+    segmentation.clean_up(scratch)
     # Linear ID space starting at min_new_id
     relabeled, id_map = segmentation.make_labels_contiguous(scratch)
     max_new_id = min_new_id + max(new_id for _, new_id in id_map)
@@ -124,7 +121,7 @@ def merge_from_min_id(out, seg, mask, min_new_id, scratch=None):
     scratch[mask] = min_new_id + relabeled[mask]
     assert min_new_id == max_new_id or scratch.max() == max_new_id
     # Write output and update ID invariant
-    out.flat[mask] = scratch[mask]
+    out[mask] = scratch[mask]
     return max_new_id
 
 
