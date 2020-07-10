@@ -88,10 +88,10 @@ else:
     subdirs = []
     for segdir in args.segmentation_dirs:
         subdirs.append([d for d in os.listdir(segdir) if isdir(d)])
+    logging.info(f"Found candidate segmentations: {subdirs}")
 
     # those that exist across all
     matching = [d for d in subdirs[0] if all(d in sd for sd in subdirs)]
-    logging.info(f"Found candidate segmentations: {matching}")
 
     # check that those subdirs are finished
     finished = [
