@@ -25,7 +25,7 @@ from ffn.utils import subvols
 def _h5_consensus_thread_main(subvolume):
     """Main function for consensus worker threads."""
     # compute the meet across segmentation dirs for this subvolume
-    logging.info(f"Calling split consensus for {subvolume.start}")
+    logging.info(f"Calling split consensus for {subvolume}")
     subvol_slice, meet_result = meet_consensus.load_and_compute_meet(
         subvolume,
         _h5_consensus_thread_main.segmentation_dirs,
