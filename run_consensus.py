@@ -52,6 +52,7 @@ ap.add_argument(
 )
 ap.add_argument(
     "--transpose",
+    action="store_true",
     help="This flag 'transposes' the 'axes' of the consensus. If set, "
     "and if `M` directories are passed to --segmentation_dirs, each "
     "of those directories should contain `N` FFN segmentation result "
