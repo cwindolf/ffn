@@ -266,6 +266,7 @@ def load_and_compute_meet(segmentation_dirs, subvolume=None, min_ffn_size=0):
     """
     # location of segs to load
     load_corner = (0, 0, 0)
+    logging.info(f"{subvolume}")
     if subvolume is not None:
         load_corner = subvolume.start
 
