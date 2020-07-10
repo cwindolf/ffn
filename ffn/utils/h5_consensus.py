@@ -44,8 +44,9 @@ def _h5_consensus_thread_main(subvolume):
     # ID space on its own, it's the only place where enough info is present
     logging.info(f"Merging with main at {subvolume.start}")
     logging.info(f"Slice is {subvol_slice}")
+    logging.info(f"{consensus_data.shape}")
     merge, sv_max_id, sv_old_max_id, new_mask = meet_consensus.paste_new_seg(
-        consensus_data[subvol_slice], meet_result
+        consensus_data[tuple(subvol_slice)], meet_result
     )
 
     return merge, sv_max_id, sv_old_max_id, new_mask, subvol_slice
