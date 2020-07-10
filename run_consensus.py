@@ -123,6 +123,7 @@ else:
     for h5p, d in zip(h5_paths, valid):
         if exists(h5p):
             logging.info(f"{h5p} exists. Skipping {d}.")
+            continue
 
         segdirs = [join(segdir, d) for segdir in args.segmentation_dirs]
         logging.info(f"{h5p} <- consensus({segdirs})")
