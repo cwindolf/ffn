@@ -76,11 +76,8 @@ if not args.transpose:
         min_ffn_size=args.min_ffn_size,
     )
 else:
-    # check output path does not exist or is an empty directory
     # make directory if necessary
-    if exists(args.output):
-        assert isdir(args.output) and not os.listdir(args.output)
-    else:
+    if not exists(args.output):
         os.makedirs(args.output)
 
     # -- find matching subdirs with existing compatible segmentations
