@@ -94,6 +94,9 @@ else:
     # those that exist across all
     matching = [d for d in subdirs[0] if all(d in sd for sd in subdirs)]
     logging.info(f"Found candidate segmentations: {matching}")
+    logging.info(
+        "Analyzing those. Some 'loading segmentation' messages will appear."
+    )
 
     # check that those subdirs are finished
     finished = [
