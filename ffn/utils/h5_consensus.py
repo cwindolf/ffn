@@ -14,96 +14,9 @@ import os.path
 import h5py
 import numpy as np
 
-from ffn.inference import storage
 from ffn.utils import bounding_box
 from ffn.utils import meet_consensus
-
-
-# -- subvolume-parallelism helpers
-
-def get_subvolumes(segdir):
-    """Get all of the subvolumes in an FFN segmentation directory.
-    """
-    bboxes = []
-    for corner in sorted(storage.get_existing_corners(segdir)):
-        # load mmap style to avoid using memory
-        seg, _ = storage.load_segmentation(
-            segdir, corner, split_cc=False, mmap_mode="r"
-        )
-        # XXX Reverse size, right?
-        size = seg.shape
-        bboxes.append(bounding_box.BoundingBox(start=corner, size=size))
-    return bboxes
-
-
-def check_same_subvolumes(segdirs):
-    """Check that multiple segmentations used the same subvolumes
-
-    Returns the subvolumes too. So, you can call this instead
-    of `get_subvolumes` to add an error check.
-    """
-    with multiprocessing.pool.ThreadPool() as pool:
-        allsvs_ = list(pool.map(get_subvolumes, segdirs))
-    allsvs = allsvs_[0]
-
-    # Check all the same
-    for svs in allsvs_[1:]:
-        assert all(a == b for a, b in zip(allsvs, svs))
-    del allsvs_
-
-    return allsvs
-
-
-def subvolume_tiers(subvolumes):
-    """Find maximal groups of non-overlapping subvolumes
-
-    The idea is that some operations (such as meet) can be run over
-    multiple subvolumes in parallel when it's guaranteed that the
-    subvolumes don't overlap at all. So, let's find the largest
-    possible groups of subvolumes that don't overlap -- these will
-    be called "tiers".
-
-    How do we choose the tiers?
-
-    It's a "Chessboard" idea. In 2D, a chessboard would require 4 tiers
-    for overlapping tiles (as long as the overlap is less than half the
-    tile size.) (The black and white chessboard has overlap=0). The
-    tiers are 0, x+, y+, and xy+. In 3D, we need 8 tiers: 0, x+, y+, z+,
-    xy+, xz+, yz+, xyz+.
-
-    That's nice, but honestly, it's easier to just compute these
-    greedily by brute force it than to derive some algorithm using
-    intuition from 3D chessboard. Still, we'll get the same result.
-
-    Arguments
-    ---------
-    subvolumes : list of BoundingBox
-
-    Returns
-    -------
-    tiers : list of list of BoundingBox
-    """
-    tiers = []
-    unused_indices = list(range(len(subvolumes)))
-    while unused_indices:
-        new_tier = [subvolumes[unused_indices.pop(0)]]
-        new_unused_indices = []
-        for ind in unused_indices:
-            sv = subvolumes[ind]
-            intersections = bounding_box.intersections([sv], new_tier)
-            if intersections:
-                # this box intersects another in the tier
-                new_unused_indices.append(ind)
-            else:
-                new_tier.append(sv)
-        unused_indices = new_unused_indices
-        tiers.append(new_tier)
-
-    assert len(tiers) == min(len(subvolumes), 8)
-    assert sum(len(tier) for tier in tiers) == len(subvolumes)
-    logging.info(f"Tier lengths: {[len(tier) for tier in tiers]}")
-
-    return tiers
+from ffn.utils import subvols
 
 
 # -- threading helpers for main HDF5 consensus routine
@@ -199,9 +112,9 @@ def hdf5_meet_consensus(
     assert not os.path.exists(out_fn), f"{out_fn} already exists."
 
     # -- get subvolume structure
-    subvolumes = check_same_subvolumes(segmentation_dirs)
+    subvolumes = subvols.check_same_subvolumes(segmentation_dirs)
     outer_bbox = bounding_box.containing(*subvolumes)
-    tiers = subvolume_tiers(subvolumes)
+    tiers = subvols.subvolume_tiers(subvolumes)
 
     # -- main portion
     # get appropriate size for thread pool
