@@ -125,14 +125,9 @@ def hdf5_meet_consensus(
 
     # this is the only writeable reference to our output file
     # h5 needs libver latest to use single writer/multiple reader
-    # also enter ThreadPool context here to avoid super deep nesting
     with h5py.File(
         out_fn, "w", libver="latest", swmr=True
-    ) as seg_outf, multiprocessing.pool.ThreadPool(
-        nthreads,
-        initializer=_h5_consensus_thread_initializer,
-        initargs=(out_fn, dset, segmentation_dirs, min_ffn_size),
-    ) as pool:
+    ) as seg_outf:
         # -- set up data
         # note the fillvalue=0 to initialize seg to all background
         seg_out = seg_outf.create_dataset(
@@ -148,41 +143,46 @@ def hdf5_meet_consensus(
         seg_outf.swmr_mode = True
 
         # -- main loop
-        # serial over tiers
-        for tier_num, tier in enumerate(tiers, start=1):
-            logging.info(f"Running tier {tier_num} / {len(tiers)}")
+        with multiprocessing.pool.ThreadPool(
+            nthreads,
+            initializer=_h5_consensus_thread_initializer,
+            initargs=(out_fn, dset, segmentation_dirs, min_ffn_size),
+        ) as pool:
+            # serial over tiers
+            for tier_num, tier in enumerate(tiers, start=1):
+                logging.info(f"Running tier {tier_num} / {len(tiers)}")
 
-            # parallel within tiers
-            for (
-                merge, sv_max_id, sv_old_max_id, new_mask, subvol_slice
-            ) in pool.imap_unordered(_h5_consensus_thread_main, tier):
-                # -- contiguous ID space logic
-                # done on the main thread since it's hard to parallelize
-                max_id = seg_outf["max_id"][0]
-                id_diff = max_id - sv_old_max_id
-                assert id_diff >= 0
-                assert sv_max_id + id_diff < np.iinfo(np.uint32).max
-                # add the diff into the view
-                if id_diff > 0:
-                    merge[new_mask] += id_diff
-                # update the global max id
-                new_max_id = max(max_id, merge.max())
-                seg_outf["max_id"][0] = new_max_id
-                seg_outf["max_id"].flush()
-                # check that it wrote OK
-                assert (
-                    new_max_id - max_id == seg_outf["max_id"][0] - max_id
-                )
+                # parallel within tiers
+                for (
+                    merge, sv_max_id, sv_old_max_id, new_mask, subvol_slice
+                ) in pool.imap_unordered(_h5_consensus_thread_main, tier):
+                    # -- contiguous ID space logic
+                    # done on the main thread since it's hard to parallelize
+                    max_id = seg_outf["max_id"][0]
+                    id_diff = max_id - sv_old_max_id
+                    assert id_diff >= 0
+                    assert sv_max_id + id_diff < np.iinfo(np.uint32).max
+                    # add the diff into the view
+                    if id_diff > 0:
+                        merge[new_mask] += id_diff
+                    # update the global max id
+                    new_max_id = max(max_id, merge.max())
+                    seg_outf["max_id"][0] = new_max_id
+                    seg_outf["max_id"].flush()
+                    # check that it wrote OK
+                    assert (
+                        new_max_id - max_id == seg_outf["max_id"][0] - max_id
+                    )
 
-                # -- write subvolume to HDF5
-                seg_out[subvol_slice] = merge
-                seg_out.flush()
+                    # -- write subvolume to HDF5
+                    seg_out[subvol_slice] = merge
+                    seg_out.flush()
 
-                # -- inform the public
-                n_done += 1
-                logging.info(
-                    f"[sv {n_done} / {len(subvolumes)}] old max id: "
-                    f"{max_id}, new max id: {new_max_id}."
-                )
+                    # -- inform the public
+                    n_done += 1
+                    logging.info(
+                        f"[sv {n_done} / {len(subvolumes)}] old max id: "
+                        f"{max_id}, new max id: {new_max_id}."
+                    )
 
     logging.info(f"Done with consensus. Wrote dataset {dset} in {out_fn}")
