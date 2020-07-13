@@ -162,7 +162,7 @@ def loadspec(datspec, **kwargs):
         if dset is None:
             # try to guess it
             with h5py.File(path, "r") as h5:
-                dsets = set(h5.keys())
+                dsets = list(h5.keys())
             assert len(dsets) == 1, f"You pick the dset, ok? {dsets}"
             dset = dsets[0]
 
