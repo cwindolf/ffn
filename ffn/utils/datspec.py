@@ -62,8 +62,6 @@ def loadspec(datspec, **kwargs):
         with h5py.File(path, "r") as h5:
             return h5[dset]
 
-        return np.load(path, **kwargs)[dset]
-
     elif os.path.isdir(path):
         pattern = os.path.join(path, f"*.{dset}")
         files = list(sorted(glob.glob(pattern)))

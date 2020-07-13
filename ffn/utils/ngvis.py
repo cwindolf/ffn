@@ -114,9 +114,9 @@ def main():
 
     # Load and normalize raw data for display. ng is happier with [0,1]
     print("Loading raw data...")
-    raw = dx.loadspec(args.overlay, readonly_mmap=args.mmap)
+    raw = dx.loadspec(args.raw)
     if raw.dtype.kind == 'f':
-        if 'gppx' not in args.overlay:
+        if 'gppx' not in args.raw:
             raw -= raw.min()
             raw /= raw.max()
 
