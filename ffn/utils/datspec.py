@@ -4,6 +4,7 @@ import imageio
 import numpy as np
 import h5py
 
+
 def parse_slice_expr(slice_expr):
     '''Parse a slice expression into an actual slice
 
@@ -108,7 +109,11 @@ def parse_spec(spec):
         assert ']' in after_bracket
         slice_expr = after_bracket.split(']')[0]
 
-    parsed_spec = srcf, dset, slice_expr
+    slicer = None
+    if slice_expr is not None:
+        slicer = parse_slice_expr(slice_expr)
+
+    parsed_spec = srcf, dset, slicer
     return parsed_spec
 
 
@@ -133,14 +138,14 @@ def loadspec(datspec, **kwargs):
     A numpy array.
     """
     # -- parse datspec
-    path, dset, slice_expr = parse_spec(datspec)
+    path, dset, slicer = parse_spec(datspec)
 
     # -- now, load up the data
     if path.endswith(".npy"):
         assert dset is None, "You passed a dset when loading .npy?"
         data = np.load(path, **kwargs)
-        if slice_expr is not None:
-            return data[slice_expr]
+        if slicer is not None:
+            return data[slicer]
         else:
             return data
 
@@ -153,8 +158,8 @@ def loadspec(datspec, **kwargs):
             dset = dsets[0]
 
         data = np.load(path, **kwargs)[dset]
-        if slice_expr is not None:
-            return data[slice_expr]
+        if slicer is not None:
+            return data[slicer]
         else:
             return data
 
@@ -168,8 +173,8 @@ def loadspec(datspec, **kwargs):
 
         with h5py.File(path, "r") as h5:
             data = h5[dset]
-            if slice_expr is not None:
-                return data[slice_expr]
+            if slicer is not None:
+                return data[slicer]
             else:
                 return data
 
