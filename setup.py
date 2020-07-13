@@ -29,7 +29,6 @@ setup(
         'scikit-image',
         'scipy',
         'numpy',
-        'tensorflow',
         'h5py',
         'pillow',
         'absl-py',
