@@ -18,7 +18,9 @@ setup(
         'run_inference.py',
         'train.py',
     ],
-    entry_points=['ngvis=ffn.utils.ngvis:main'],
+    entry_points={
+        'console_scripts': ['ngvis=ffn.utils.ngvis:main'],
+    },
     url='https://github.com/google/ffn',
     license='LICENSE',
     description='Flood-Filling Networks for volumetric instance segmentation',
