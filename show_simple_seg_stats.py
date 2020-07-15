@@ -15,4 +15,4 @@ for datspec in args.datspecs:
     seg = dx.loadspec(datspec)
     metrics = unsupervised_metrics.unsupervised_metrics(seg)
     for name, met in zip(metrics._fields, metrics):
-        print(f" - {name}: metric")
+        print(f" - {name}: {met}")
