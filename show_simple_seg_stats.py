@@ -18,7 +18,7 @@ def stats_thread(datspec):
     return datspec, metrics
 
 
-with ThreadPool() as pool:
+with ThreadPool(min(len(args.datspecs), 4)) as pool:
     for datspec, metrics in pool.imap(stats_thread, args.datspecs):
         print(datspec)
         for name, met in zip(metrics._fields, metrics):
