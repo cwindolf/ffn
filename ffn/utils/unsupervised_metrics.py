@@ -69,7 +69,7 @@ def unsupervised_metrics(seg, margin=24):
 
     # ids that don't get near the boundary
     decrumbed_island_ids = np.unique(
-        ccs[margin:-margin, margin:-margin, margin:-margin]
+        decrumbed[margin:-margin, margin:-margin, margin:-margin]
     )
     decrumbed_island_ids = np.setdiff1d(decrumbed_island_ids, [0])
     decrumbed_n_islands = decrumbed_island_ids.size
