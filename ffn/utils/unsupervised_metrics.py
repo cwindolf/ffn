@@ -5,34 +5,59 @@ from ffn.inference import segmentation
 
 UnsupMetrics = namedtuple(
     "UnsupMetrics",
-    "density min_size median_size max_size n_islands",
+    "density nsegs min_size mean_size median_size "
+    "max_size n_islands split_nsegs split_min_size "
+    "split_mean_size split_median_size split_max_size "
+    "split_n_islands",
 )
 
 
 def unsupervised_metrics(seg, margin=24):
     """These are grouped so that computations can be shared."""
-    ccs = segmentation.split_disconnected_components(seg)
-
     # density
-    foreground_mask = ccs != 0
+    foreground_mask = seg != 0
     density = foreground_mask.mean()
 
-    # get ids and sizes
-    ids, sizes = np.unique(ccs[foreground_mask], return_counts=True)
-
     # size statistics
-    np.sort(sizes)
+    ids, sizes = np.unique(seg[foreground_mask], return_counts=True)
+    nsegs = ids.size
     median_size = np.median(sizes)
+    mean_size = sizes.mean()
     min_size = sizes.min()
     max_size = sizes.max()
 
     # ids that don't get near the boundary
     island_ids = np.unique(
-        ccs[margin:-margin, margin:-margin, margin:-margin]
+        seg[margin:-margin, margin:-margin, margin:-margin]
     )
     island_ids = np.setdiff1d(island_ids, [0])
     n_islands = island_ids.size
 
+    # split cc size statistics
+    ccs = segmentation.split_disconnected_components(seg)
+    # get ids and sizes
+    split_ids, split_sizes = np.unique(
+        ccs[foreground_mask], return_counts=True
+    )
+    split_nsegs = split_ids.size
+    split_median_size = np.median(split_sizes)
+    split_mean_size = split_sizes.mean()
+    split_min_size = split_sizes.min()
+    split_max_size = split_sizes.max()
+
+    # ids that don't get near the boundary
+    split_island_ids = np.unique(
+        ccs[margin:-margin, margin:-margin, margin:-margin]
+    )
+    split_island_ids = np.setdiff1d(split_island_ids, [0])
+    split_n_islands = split_island_ids.size
+
     return UnsupMetrics(
-        density, min_size, median_size, max_size, n_islands
+        density,
+        nsegs,
+        min_size, mean_size, median_size, max_size,
+        n_islands,
+        split_nsegs,
+        split_min_size, split_mean_size, split_median_size, split_max_size,
+        split_n_islands,
     )
