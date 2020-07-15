@@ -8,8 +8,9 @@ UnsupMetrics = namedtuple(
     "density nsegs min_size mean_size median_size max_size "
     "n_islands split_nsegs split_min_size split_mean_size "
     "split_median_size split_max_size split_n_islands "
-    "decrumbed_nsegs decrumbed_min_size decrumbed_mean_size "
-    "decrumbed_median_size decrumbed_max_size decrumbed_n_islands",
+    "decrumbed_nsegs decrumbed_density decrumbed_min_size "
+    "decrumbed_mean_size decrumbed_median_size decrumbed_max_size "
+    "decrumbed_n_islands",
 )
 
 
@@ -55,8 +56,10 @@ def unsupervised_metrics(seg, margin=24):
 
     # decrumbed statistics
     decrumbed = segmentation.clear_dust(seg)
+    decrumbed_foreground = decrumbed != 0
+    decrumbed_density = decrumbed_foreground.mean()
     decrumbed_ids, decrumbed_sizes = np.unique(
-        decrumbed[foreground_mask], return_counts=True
+        decrumbed[decrumbed_foreground], return_counts=True
     )
     decrumbed_nsegs = decrumbed_ids.size
     decrumbed_median_size = np.median(decrumbed_sizes)
@@ -79,7 +82,7 @@ def unsupervised_metrics(seg, margin=24):
         split_nsegs,
         split_min_size, split_mean_size, split_median_size, split_max_size,
         split_n_islands,
-        decrumbed_nsegs,
+        decrumbed_nsegs, decrumbed_density,
         decrumbed_min_size, decrumbed_mean_size, decrumbed_median_size,
         decrumbed_max_size, decrumbed_n_islands,
     )
