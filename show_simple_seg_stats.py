@@ -11,8 +11,8 @@ ap.add_argument("datspecs", nargs="+")
 args = ap.parse_args()
 
 for datspec in args.datspecs:
+    print(datspec)
     seg = dx.loadspec(datspec)
     metrics = unsupervised_metrics.unsupervised_metrics(seg)
-    print(datspec)
     for name, met in zip(metrics._fields, metrics):
         print(f" - {name}: metric")
