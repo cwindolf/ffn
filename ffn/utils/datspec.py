@@ -158,6 +158,7 @@ def loadspec(datspec, **kwargs):
             dset = dsets[0]
 
         data = np.load(path, **kwargs)[dset]
+
         if slicer is not None:
             return data[slicer]
         else:
@@ -173,18 +174,20 @@ def loadspec(datspec, **kwargs):
 
         with h5py.File(path, "r") as h5:
             data = h5[dset]
+
             if slicer is not None:
                 return data[slicer]
             else:
-                return data
+                return data[:]
 
     elif os.path.isdir(path):
         pattern = os.path.join(path, f"*.{dset}")
         files = list(sorted(glob.glob(pattern)))
         assert files, f"No files matched glob {pattern}."
         data = np.array([imageio.imread(f) for f in files])
-        if slice_expr is not None:
-            return data[slice_expr]
+
+        if slicer is not None:
+            return data[slicer]
         else:
             return data
 
