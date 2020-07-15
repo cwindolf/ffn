@@ -5,10 +5,11 @@ from ffn.inference import segmentation
 
 UnsupMetrics = namedtuple(
     "UnsupMetrics",
-    "density nsegs min_size mean_size median_size "
-    "max_size n_islands split_nsegs split_min_size "
-    "split_mean_size split_median_size split_max_size "
-    "split_n_islands",
+    "density nsegs min_size mean_size median_size max_size "
+    "n_islands split_nsegs split_min_size split_mean_size "
+    "split_median_size split_max_size split_n_islands "
+    "decrumbed_nsegs decrumbed_min_size decrumbed_mean_size "
+    "decrumbed_median_size decrumbed_max_size decrumbed_n_islands",
 )
 
 
@@ -52,6 +53,24 @@ def unsupervised_metrics(seg, margin=24):
     split_island_ids = np.setdiff1d(split_island_ids, [0])
     split_n_islands = split_island_ids.size
 
+    # decrumbed statistics
+    decrumbed = segmentation.clear_dust(seg)
+    decrumbed_ids, decrumbed_sizes = np.unique(
+        decrumbed[foreground_mask], return_counts=True
+    )
+    decrumbed_nsegs = decrumbed_ids.size
+    decrumbed_median_size = np.median(decrumbed_sizes)
+    decrumbed_mean_size = decrumbed_sizes.mean()
+    decrumbed_min_size = decrumbed_sizes.min()
+    decrumbed_max_size = decrumbed_sizes.max()
+
+    # ids that don't get near the boundary
+    decrumbed_island_ids = np.unique(
+        ccs[margin:-margin, margin:-margin, margin:-margin]
+    )
+    decrumbed_island_ids = np.setdiff1d(decrumbed_island_ids, [0])
+    decrumbed_n_islands = decrumbed_island_ids.size
+
     return UnsupMetrics(
         density,
         nsegs,
@@ -60,4 +79,7 @@ def unsupervised_metrics(seg, margin=24):
         split_nsegs,
         split_min_size, split_mean_size, split_median_size, split_max_size,
         split_n_islands,
+        decrumbed_nsegs,
+        decrumbed_min_size, decrumbed_mean_size, decrumbed_median_size,
+        decrumbed_max_size, decrumbed_n_islands,
     )
