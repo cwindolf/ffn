@@ -15,17 +15,18 @@ These are supported by launching a runner per inference request,
 but making sure that the runners all share an executor and session
 and model etc.
 """
-import os
-import time
-import logging
 import itertools
-import numpy as np
+import logging
 from multiprocessing.pool import ThreadPool
+import numpy as np
+import os
+import subprocess
+import time
 
-import h5py
-from google.protobuf import text_format
 from absl import app
 from absl import flags
+from google.protobuf import text_format
+import h5py
 from tensorflow import gfile
 
 from ffn.utils import bounding_box_pb2
@@ -33,7 +34,7 @@ from ffn.utils import bounding_box
 from ffn.inference import inference_pb2
 from ffn.inference import inference
 
-FLAGS = flags.FLAGS
+
 flags.DEFINE_string(
     'inference_requests',
     None,
@@ -46,13 +47,30 @@ flags.DEFINE_string(
 )
 flags.DEFINE_integer('subvolume_size', -1, '')
 flags.DEFINE_integer('subvolume_overlap', 48, '')
+
 flags.DEFINE_integer('rank', -1, 'My worker id.')
 flags.DEFINE_integer('nworkers', -1, 'Number of workers.')
+
+flags.DEFINE_integer(
+    'nslurmworkers',
+    -1,
+    'Overrides rank/nworkers to parallelize on Slurm.',
+)
+flags.DEFINE_string(
+    'srunflags',
+    "-p gpu --gres=gpu:1 -J inf{rank}",
+    "Flags for srun if --nslurmworkers set. "
+    "Will be formatted with `rank=FLAGS.rank`.",
+)
+
 flags.DEFINE_boolean(
     'advise',
     False,
     'Don\'t run anything, just give advice.'
 )
+
+
+FLAGS = flags.FLAGS
 
 
 def _thread_main(runners_and_bbox):
@@ -229,7 +247,33 @@ def infer():
     del runner
 
 
+def launch_slurm_jobs():
+    # build an srun command for each rank
+    argvs = [
+        [
+            "srun",
+            FLAGS.srunflags.format(rank=i).split(),
+            "python",
+            __file__,
+            "--rank={i}",
+            "--nworkers={FLAGS.nslurmworkers}",
+            "--inference_requests",
+            FLAGS.inference_requests,
+            "--bounding_box",
+            FLAGS.bounding_box,
+        ]
+        for i in range(FLAGS.nslurmworkers)
+    ]
+
+    # launch processes and wait for them.
+    procs = [subprocess.Popen(argv) for argv in argvs]
+    while None in [proc.poll() for proc in procs]:
+        time.sleep(10.0)
+    print("Return codes:", [p.returncode for p in procs])
+
+
 def advise():
+    """Reports the number of subvolumes per FLAGS."""
     outer_bbox = get_outer_bbox()
     if FLAGS.subvolume_size < 0:
         svsize = outer_bbox.size
@@ -245,6 +289,8 @@ def advise():
 def main(unused_argv):
     if FLAGS.advise:
         advise()
+    elif FLAGS.nslurmworkers > 0:
+        launch_slurm_jobs()
     else:
         infer()
 
