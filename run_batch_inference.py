@@ -160,9 +160,10 @@ def infer():
     print('The boxes:\n\t', '\n\t'.join(str(s) for s in subvols))
     print('The slices:\n\t', '\n\t'.join(str(s.to_slice()) for s in subvols))
 
-    # If we are one of many workers, take the ith subvol
+    # If we are worker i of many, take the ith subvol
     # only when (i mod nworkers) == rank
     # TODO: This method suffers from load balance problems.
+    #       However, parallelizing better is a tricky problem.
     if FLAGS.nworkers > 0 and FLAGS.rank >= 0:
         assert FLAGS.rank < FLAGS.nworkers
         subvols = itertools.islice(subvols, FLAGS.rank, nsb, FLAGS.nworkers)
@@ -266,6 +267,10 @@ def launch_slurm_jobs():
             f"--nworkers={FLAGS.nslurmworkers}",
             "--inference_requests",
             FLAGS.inference_requests,
+            "--subvolume_size",
+            FLAGS.subvolume_size,
+            "--subvolume_overlap",
+            FLAGS.subvolume_overlap,
         ] + (
             ["--bounding_box", FLAGS.bounding_box]
             if FLAGS.bounding_box
