@@ -55,7 +55,7 @@ ckpt_paths = sorted(ckpt_paths, key=lambda x: int(x.split("model.ckpt-")[1]))
 ckpts = sorted(args.ckpts, key=int)
 
 # -- write InferenceRequests and make folders
-invert_policy = "{\"segmentation_dir\": \"{peaks_dir}\"}"
+invert_policy = "{{\"segmentation_dir\": \"{peaks_dir}\"}}"
 for ckpt, ckpt_path in zip(ckpts, ckpt_paths):
     # paths
     peaks_dir = join(args.output_dir, f"{ckpt}_A_peaks")
