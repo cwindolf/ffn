@@ -83,6 +83,7 @@ def _thread_main(runners_and_bbox):
     )
     for irun, runner in enumerate(runners):
         logging.info('Thread starting run %d/%d', irun + 1, len(runners))
+        logging.info('')
         runner.run(bbox.start, bbox.size)
         logging.info('Thread finished run %d/%d', irun + 1, len(runners))
     return time.time() - thread_start
@@ -114,8 +115,8 @@ def get_outer_bbox(request):
         )
         path, dset = request.image.hdf5.split(":")
         with h5py.File(path, "r") as f:
-            size_xyz = f[dset].shape[::-1]
-        outer_bbox = bounding_box.BoundingBox(start=(0, 0, 0), size=size_xyz)
+            size_zyx = f[dset].shape
+        outer_bbox = bounding_box.BoundingBox(start=(0, 0, 0), size=size_zyx)
     return outer_bbox
 
 
