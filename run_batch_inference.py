@@ -112,7 +112,7 @@ def get_outer_bbox(request):
             "You didn't give a bounding box. Trying to figure it out from "
             "the data."
         )
-        path, dset = request.hdf5.split(":")
+        path, dset = request.image.hdf5.split(":")
         with h5py.File(path, "r") as f:
             size_xyz = f[dset].shape[::-1]
         outer_bbox = bounding_box.BoundingBox(start=(0, 0, 0), size=size_xyz)
