@@ -259,7 +259,7 @@ def launch_slurm_jobs():
     argvs = [
         [
             "srun",
-            FLAGS.srunflags.format(rank=i).split(),
+            *FLAGS.srunflags.format(rank=i).split(),
             "python",
             __file__,
             "--rank={i}",
