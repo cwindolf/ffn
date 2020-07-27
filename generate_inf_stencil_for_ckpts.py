@@ -58,10 +58,10 @@ ckpts = sorted(args.ckpts, key=int)
 invert_policy = "{\"segmentation_dir\": \"{peaks_dir}\"}"
 for ckpt, ckpt_path in zip(ckpts, ckpt_paths):
     # paths
-    peaks_dir = join(args.output_dir, f"{ckpt}_peaks")
-    invert_dir = join(args.output_dir, f"{ckpt}_invert")
-    peaks_infreq_fn = join(args.output_dir, f"{ckpt}_peaks.pbtxt")
-    invert_infreq_fn = join(args.output_dir, f"{ckpt}_invert.pbtxt")
+    peaks_dir = join(args.output_dir, f"{ckpt}_A_peaks")
+    invert_dir = join(args.output_dir, f"{ckpt}_B_invert")
+    peaks_infreq_fn = join(args.output_dir, f"{ckpt}_A_peaks.pbtxt")
+    invert_infreq_fn = join(args.output_dir, f"{ckpt}_B_invert.pbtxt")
 
     # make them
     os.makedirs(peaks_dir, exist_ok=True)
