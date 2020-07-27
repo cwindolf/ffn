@@ -262,10 +262,10 @@ def launch_slurm_jobs():
             *FLAGS.srunflags.format(rank=i).split(),
             "python",
             __file__,
-            "--rank={i}",
+            f"--rank={i}",
             "--nworkers={FLAGS.nslurmworkers}",
             "--inference_requests",
-            *FLAGS.inference_requests,
+            FLAGS.inference_requests,
             "--bounding_box",
             FLAGS.bounding_box,
         ]
