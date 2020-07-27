@@ -59,7 +59,7 @@ flags.DEFINE_integer(
 )
 flags.DEFINE_string(
     'srunflags',
-    "-p gpu --gres=gpu:1 -J inf{rank}",
+    "-u -p gpu --gres=gpu:1 -J inf{rank}",
     "Flags for srun if --nslurmworkers set. "
     "Will be formatted with `rank=FLAGS.rank`.",
 )
