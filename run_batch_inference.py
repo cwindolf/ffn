@@ -263,12 +263,14 @@ def launch_slurm_jobs():
             "python",
             __file__,
             f"--rank={i}",
-            "--nworkers={FLAGS.nslurmworkers}",
+            f"--nworkers={FLAGS.nslurmworkers}",
             "--inference_requests",
             FLAGS.inference_requests,
-            "--bounding_box",
-            FLAGS.bounding_box,
-        ]
+        ] + (
+            ["--bounding_box", FLAGS.bounding_box]
+            if FLAGS.bounding_box
+            else []
+        )
         for i in range(FLAGS.nslurmworkers)
     ]
 
