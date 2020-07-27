@@ -43,7 +43,8 @@ flags.DEFINE_string(
 flags.DEFINE_string(
     'bounding_box',
     None,
-    'BoundingBox pbtxt file.',
+    'BoundingBox pbtxt file. Optional: if not supplied, will look '
+    'at the inference request, open the raw data, and use its bbox.',
 )
 flags.DEFINE_integer('subvolume_size', -1, '')
 flags.DEFINE_integer('subvolume_overlap', 48, '')
