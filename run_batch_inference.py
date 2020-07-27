@@ -265,7 +265,7 @@ def launch_slurm_jobs():
             "--rank={i}",
             "--nworkers={FLAGS.nslurmworkers}",
             "--inference_requests",
-            FLAGS.inference_requests,
+            *FLAGS.inference_requests,
             "--bounding_box",
             FLAGS.bounding_box,
         ]
