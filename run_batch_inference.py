@@ -268,9 +268,9 @@ def launch_slurm_jobs():
             "--inference_requests",
             FLAGS.inference_requests,
             "--subvolume_size",
-            FLAGS.subvolume_size,
+            str(FLAGS.subvolume_size),
             "--subvolume_overlap",
-            FLAGS.subvolume_overlap,
+            str(FLAGS.subvolume_overlap),
         ] + (
             ["--bounding_box", FLAGS.bounding_box]
             if FLAGS.bounding_box
