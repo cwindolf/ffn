@@ -88,6 +88,19 @@ def _thread_main(runners_and_bbox):
     return time.time() - thread_start
 
 
+def get_requests():
+    """Load and return the FLAGS.inference_requests"""
+    requests = []
+    for infreq_filename in FLAGS.inference_requests.split():
+        request = inference_pb2.InferenceRequest()
+        with open(infreq_filename) as infreq_f:
+            text_format.Parse(infreq_f.read(), request)
+        if not gfile.Exists(request.segmentation_output_dir):
+            gfile.MakeDirs(request.segmentation_output_dir)
+        requests.append(request)
+    return requests
+
+
 def get_outer_bbox(request):
     outer_bbox_pb = bounding_box_pb2.BoundingBox()
     if FLAGS.bounding_box:
@@ -107,14 +120,7 @@ def get_outer_bbox(request):
 
 
 def infer():
-    requests = []
-    for infreq_filename in FLAGS.inference_requests.split():
-        request = inference_pb2.InferenceRequest()
-        with open(infreq_filename) as infreq_f:
-            text_format.Parse(infreq_f.read(), request)
-        if not gfile.Exists(request.segmentation_output_dir):
-            gfile.MakeDirs(request.segmentation_output_dir)
-        requests.append(request)
+    requests = get_requests()
 
     # Some asserts to make sure things don't go haywire
     batch_size = requests[0].batch_size
@@ -167,7 +173,7 @@ def infer():
     # Figure out how many threads
     if concurrent_requests < 0:
         concurrent_requests = nsb
-    elif concurrent_requests < request.batch_size:
+    elif concurrent_requests < requests[0].batch_size:
         raise ValueError(
             'Please let concurrent_requests < 0 or '
             'concurrent_requests >= batch_size.'
@@ -275,7 +281,8 @@ def launch_slurm_jobs():
 
 def advise():
     """Reports the number of subvolumes per FLAGS."""
-    outer_bbox = get_outer_bbox()
+    requests = get_requests()
+    outer_bbox = get_outer_bbox(requests[0])
     if FLAGS.subvolume_size < 0:
         svsize = outer_bbox.size
     else:
