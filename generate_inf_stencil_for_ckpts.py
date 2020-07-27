@@ -44,9 +44,9 @@ for infreq_fn in args.infreqs:
 
 # -- figure out checkpoint paths
 ckpt_paths = [
-    d.split(".")[0]
-    for d in glob.glob(join(args.ckpt_dir, "model.ckpt-*.meta"))
-    if any(c in d for c in args.ckpts)
+    ckpt_meta_path[:-len(".meta")]
+    for ckpt_meta_path in glob.glob(join(args.ckpt_dir, "model.ckpt-*.meta"))
+    if any(c in ckpt_meta_path for c in args.ckpts)
 ]
 assert len(ckpt_paths) == len(args.ckpts)
 
