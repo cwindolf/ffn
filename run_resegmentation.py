@@ -37,13 +37,12 @@ subcommand.
         $ python run_resegmentation.py analyze --help
 [Step 3]
     Given an affinity threshold in (0, 1), merge all neurites with
-    affinity greater than the threshold. Then, post that merge (in a
-    very destructive fashion!) to the labels instance in a DVID repo.
-    Don't use a repo that has been traced.
-        $ python run_resegmentation.py post_automerge --help
+    affinity greater than the threshold. Saves the resulting supervoxel
+    to body mapping to disk. Can optionally preserve some previously
+    existing mappings.
+        $ python run_resegmentation.py automerge --help
 """
 import argparse
-import datetime
 import json
 import logging
 import os
@@ -56,10 +55,16 @@ import numpy as np
 import pandas as pd
 from google.protobuf import text_format
 
+import neuclease.merge_table
+import neuclease.dvid
+
 from ffn.inference import inference_pb2
 from ffn.utils import bounding_box_pb2
 from ffn.utils import geom_utils
 from ffn.utils import pair_detector
+from ffn.inference import inference
+from ffn.inference import resegmentation
+from ffn.inference import resegmentation_analysis
 
 # This is used by resegmentation during EDT to specify
 # anisotropy of the metric. Our voxels are isotropic so
@@ -261,9 +266,6 @@ def build_reseg_req(
 
 def run_inferences(reseg_req_path, nthreads, rank, nworkers):
     """Run inferences specified in a ResegmentationRequest."""
-    from ffn.inference import inference
-    from ffn.inference import resegmentation
-
     # Configure logger
     logger = logging.getLogger(f"[reseg rank{rank}]")
 
@@ -314,9 +316,6 @@ def run_inferences(reseg_req_path, nthreads, rank, nworkers):
 
 def analyze_results(reseg_req_path, affinities_npy, bigmem, nthreads):
     """Produce affinities from completed ResegmentationRequest."""
-    from ffn.inference import resegmentation
-    from ffn.inference import resegmentation_analysis
-
     # Crash now rather than after doing all the work
     assert bool(affinities_npy)
     assert not os.path.exists(affinities_npy)
@@ -395,11 +394,11 @@ def analyze_results(reseg_req_path, affinities_npy, bigmem, nthreads):
     np.save(affinities_npy, merge_table)
 
 
-# ------------------ step 3: post an automatic merge ------------------
+# ---------------------- step 3: automatic merge ----------------------
 
 
-def post_automerge(
-    affinities_npy, threshold, dvid_host, repo_uuid, indices_batch_sz=512
+def automerge(
+    affinities_npy, mappings_output, threshold, preserve_mappings
 ):
     """
     Many thanks to Stuart Berg @stuarteberg for the code. To get this
@@ -410,22 +409,25 @@ def post_automerge(
     without neuclease, so you probably already have it.
     """
     assert 0 < threshold < 1
+    assert mappings_output.endswith(".pkl")
+    assert preserve_mappings is None or preserve_mappings.endswith(".pkl")
 
-    # I didn't want to make neuclease a hard dependency for the rest
-    # of the script.
-    import neuclease.merge_table
-    import neuclease.dvid
-
-    # Hit host with a simple api call to make sure it works
-    with timer("Fetched mutid."):
-        repo_info = neuclease.dvid.fetch_repo_info(dvid_host, repo_uuid)
-        last_mutid = repo_info["MutationID"]
-    print("It was", last_mutid)
+    # Figure out supervoxels that should not be touched ---------------
+    preserve_sv = np.array([])
+    if preserve_mappings is not None:
+        original_mappings = pd.Series.from_pickle(preserve_mappings)
+        preserve_sv = np.ascontiguousarray(original_mappings.index)
 
     # Decide on automerge ---------------------------------------------
     # neuclease will normalize the merge table a little for us
     merge_table = neuclease.merge_table.load_merge_table(affinities_npy)
-    thresholded = merge_table[merge_table["score"] > threshold]
+    open_to_merge = merge_table[
+        np.logical_not(
+            np.isin(merge_table["id_a"], preserve_sv)
+            | np.isin(merge_table["id_b"], preserve_sv)
+        )
+    ]
+    thresholded = open_to_merge[open_to_merge["score"] > threshold]
 
     # Get all supervoxel IDs present in merge table
     all_svids = np.union1d(
@@ -436,10 +438,13 @@ def post_automerge(
     merge_svids = np.union1d(
         thresholded["id_a"].values, thresholded["id_b"].values
     )
-    np.sort(merge_svids)
+    merge_svids.sort()
     assert merge_svids[0] > 0  # We should not be getting background here.
     nmergedsvs = merge_svids.size
-    print(f"Attempting to merge {nmergedsvs} svs out of {nsvs} total.")
+    print(
+        f"Attempting to merge {nmergedsvs} svs out of {nsvs} total, "
+        f"where {open_to_merge.index.size} are not being perserved."
+    )
 
     # Cluster using connected components (networkx)
     with timer("Clustered."):
@@ -453,65 +458,14 @@ def post_automerge(
     print(
         f"Agglomeration merged {nmergedsvs} out of {nsvs} original "
         f"supervoxels into {len(merges)} neurites. That means the new "
-        f"neurites have an average of {nmergedsvs / len(merges):3g} svs, "
-        f"and stddev of {np.std(csizes):3g} svs. Smallest and "
-        f"largest had sizes {min(csizes)}, {max(csizes)}."
+        f"neurites have a mean of {nmergedsvs / len(merges):3g} svs, "
+        f"median of {np.median(csizes):3g} and stddev of "
+        f"{np.std(csizes):3g} svs. Smallest and largest contain "
+        f"{min(csizes)}, {max(csizes)} supervoxels."
     )
     print("Histogram of cluster sizes:")
     print(shist(csizes, bins=16))
     assert all(sv in merge_svids for merge in merges for sv in merge)
-
-    # Update label index ----------------------------------------------
-    # Get the old index for svids who are gonna change
-    # Do this by hitting GET .../indices with batches of svids
-    batch_i = 0
-    nbatch = len(merge_svids) // indices_batch_sz
-    with timer("Downloaded all label indices, and slept a lot."):
-        plis = {}
-        for i in range(0, len(merge_svids), indices_batch_sz):
-            time.sleep(0.25)
-            svid_batch = merge_svids[i : i + indices_batch_sz]
-            with timer(f"Downloaded label index batch {batch_i} / {nbatch}."):
-                for pli in neuclease.dvid.fetch_labelindices(
-                    dvid_host, repo_uuid, "labels", svid_batch, format="pandas"
-                ):
-                    plis[pli.label] = pli
-                batch_i += 1
-
-    # Update these indices according to merges and post to DVID
-    the_time = datetime.datetime.now().isoformat()
-    li_proto_batch = []
-    batch_i = 0
-    nbatch = len(merges) // indices_batch_sz
-    with timer("Posted all merged label indices."):
-        for merge in merges:
-            merge_pli_blocks = pd.concat(
-                [plis[sv].blocks for sv in merge], ignore_index=True
-            )
-            # Create a neuclease PandasLabelIndex containing our automerge
-            new_pli = neuclease.dvid.PandasLabelIndex(
-                merge_pli_blocks,
-                merge[0],  # New label is gonna be the smallest svid in merge
-                last_mutid + 1,
-                the_time,
-                os.environ.get("USER", "automerge_unknown_user"),
-            )
-            # Converts pandas -> protobuf for posting
-            new_li_proto = neuclease.dvid.create_labelindex(new_pli)
-            li_proto_batch.append(new_li_proto)
-            if len(li_proto_batch) >= indices_batch_sz:
-                # Hit POST .../indices once for each merge batch
-                with timer(f"Posted batch {batch_i} / {nbatch}."):
-                    neuclease.dvid.post_labelindices(
-                        dvid_host, repo_uuid, "labels", li_proto_batch,
-                    )
-                batch_i += 1
-                li_proto_batch = []
-        if li_proto_batch:
-            with timer("Posted final batch."):
-                neuclease.dvid.post_labelindices(
-                    dvid_host, repo_uuid, "labels", li_proto_batch,
-                )
 
     # Upload new mappings ---------------------------------------------
     with timer("Made mapping series."):
@@ -520,11 +474,12 @@ def post_automerge(
         bodies = [merge[0] for merge in merges for _ in merge]
         mappings = pd.Series(data=bodies, index=svids)
 
-    with timer("Posted mappings to DVID."):
-        # This hits POST .../mappings
-        neuclease.dvid.post_mappings(
-            dvid_host, repo_uuid, "labels", mappings, last_mutid + 2
-        )
+        # concatenate preserve_mappings
+        if preserve_mappings is not None:
+            mappings = pd.concat(original_mappings, mappings)
+
+    with timer("Saved mappings to disk."):
+        mappings.to_pkl(mappings_output)
 
 
 # ------------------------------- main --------------------------------
@@ -634,38 +589,31 @@ if __name__ == "__main__":
     )
 
     # Step 3: Post automerge to DVID ----------------------------------
-    post_p = subparsers.add_parser(
-        "post_automerge",
+    automerge_p = subparsers.add_parser(
+        "automerge",
         help="Use the merge table from the last step to decide on an "
-        "automated merge, and post that to DVID. Please only use this on "
-        "brand new repos, since it is destructive.",
+        "automated merge, and write the resulting mapping to disk.",
     )
-    post_p.add_argument("--affinities_npy", help="Merge table from step 2.")
-    post_p.add_argument(
+    automerge_p.add_argument(
+        "--affinities_npy", help="Merge table from step 2."
+    )
+    automerge_p.add_argument(
+        "--preserve_mappings",
+        default=None,
+        help="Optional path to pd.Series in .pkl format. This would "
+        "contain supervoxel to bodyID mappings to leave unchanged "
+        "during the automerge. The Series should have supervoxel ID "
+        "as its index and body ID as values.",
+    )
+    automerge_p.add_argument(
+        "--mappings_output",
+        requred=True,
+        help="Path to .pkl where a pd.Series containing the supervoxel "
+        "ID to body ID mapping will be written. If --preserve_mappings "
+        "is set, the output here will contain that input.",
+    )
+    automerge_p.add_argument(
         "--threshold", type=float, help="Automatic merge threshold."
-    )
-    post_p.add_argument(
-        "--indices_batch_size",
-        type=int,
-        default=512,
-        help="Number of labelindices to post at a time.",
-    )
-
-    post_dvid_g = post_p.add_argument_group(
-        title="DVID",
-        description="Not to harp on this, but like, don't use a repo that has "
-        "been traced, this will destroy the work.",
-    )
-    post_dvid_g.add_argument(
-        "--repo",
-        help="UUID of DVID repo whose labels and mappings we will overwrite.",
-    )
-    post_dvid_g.add_argument(
-        "--dvid",
-        default="",
-        help="<host>:<port>. If environment variable DVIDHOST is set, we will "
-        "use that for the host, and 8000 for the port unless DVIDPORT is also "
-        "set.",
     )
 
     args = ap.parse_args()
@@ -706,19 +654,10 @@ if __name__ == "__main__":
             args.bigmem,
             args.nthreads,
         )
-    elif args.task == "post_automerge":
-        # Munge DVID host
-        dvid_host = args.dvid
-        if not dvid_host and ("DVIDHOST" in os.environ):
-            port = os.environ.get("DVIDPORT", 8000)
-            dvid_host = f"{os.environ['DVIDHOST']}:{port}"
-        elif not dvid_host:
-            raise ValueError("Please pass --dvid or set DVIDHOST.")
-
-        post_automerge(
+    elif args.task == "automerge":
+        automerge(
             args.affinities_npy,
+            args.mappings_output,
             args.threshold,
-            dvid_host,
-            args.repo,
-            indices_batch_sz=args.indices_batch_size,
+            args.preserve_mappings,
         )
