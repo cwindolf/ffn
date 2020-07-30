@@ -33,6 +33,7 @@
 			"E309",
 			"E203",
 			"E111",
+			"W503",
 		],
 		"python_interpreter": "~/opt/miniconda3/envs/ffnx/bin/python3"
 	}
