@@ -89,7 +89,7 @@ MERGE_TABLE_DTYPE = [
 
 
 def shist(arr, bins="auto", width=72):
-    """A basic string histogram for printing to terminal
+    """A basic string histogram for logging
 
     Modified from @tammoippen's crappyhist.py
 
@@ -121,7 +121,9 @@ def shist(arr, bins="auto", width=72):
 
     # Loop to build output string
     messages = [
-        f"min: {arr.min()}, median: {np.median(arr)}, max: {arr.max()}"
+        f"min: {arr.min():3g}, "
+        f"median: {np.median(arr):3g}, "
+        f"max: {arr.max():3g}"
     ]
     for freq, edge in zip(hist, edges):
         # No divider to indicate frequency of 0
@@ -449,10 +451,10 @@ def automerge(
     # Cluster using connected components (networkx)
     with timer("Clustered."):
         edges = [(row.id_a, row.id_b) for row in thresholded.itertuples()]
-        merges = list(
-            list(sorted(cc)) for cc in nx.connected_components(nx.Graph(edges))
-        )
-        csizes = np.array(list(map(len, merges)))
+        merges = [
+            sorted(cc) for cc in nx.connected_components(nx.Graph(edges))
+        ]
+        csizes = np.array([len(merge) for merge in merges])
 
     # Log stats
     print(
