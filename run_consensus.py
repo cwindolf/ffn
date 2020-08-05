@@ -70,7 +70,7 @@ args = ap.parse_args()
 
 if not args.transpose:
     h5_consensus.hdf5_meet_consensus(
-        args.out_fn,
+        args.output,
         args.segmentation_dirs,
         dset=args.dset,
         min_ffn_size=args.min_ffn_size,
