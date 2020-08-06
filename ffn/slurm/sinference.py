@@ -18,6 +18,9 @@ from ffn.inference import inference_pb2
 from ffn.utils import bounding_box_pb2
 from ffn.inference import storage
 
+# ffn/ffn/util/sinference.py
+ffn_root = Path(__file__).parent().parent().parent()
+
 
 # -- constants
 
@@ -98,7 +101,7 @@ def srun_inference(infreq, bbox, local=False, slurm_kwargs=None):
             wrapper += [k, v]
     inference_cmd = [
         "python",
-        "run_inference.py",
+        str(ffn_root.joinpath("run_inference.py")),
         "--inference_request",
         infreq,
         "--bounding_box",
