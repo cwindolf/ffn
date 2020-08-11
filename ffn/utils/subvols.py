@@ -62,7 +62,11 @@ def check_same_subvolumes(segdirs, return_bool=False):
             return False
 
         elif not same:
-            raise ValueError("Subvolume structure did not match.")
+            global_bboxes = [bounding_box.containing(svs) for svs in allsvs]
+            raise ValueError(
+                "Subvolume structure did not match."
+                f"Global bboxes were: {global_bboxes}."
+            )
 
     if return_bool:
         return True
