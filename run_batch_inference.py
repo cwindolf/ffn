@@ -221,7 +221,7 @@ def infer():
 
     # Start threads
     start_time = time.time()
-    job_args = ((runner, sv) for runner in runners for sv in subvols)
+    job_args = ((runners, sv) for sv in subvols)
     dts = []
     with ThreadPool(concurrent_requests) as pool:
         for dt in pool.imap_unordered(_thread_main, job_args):
