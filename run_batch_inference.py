@@ -122,6 +122,9 @@ def get_outer_bbox(request):
 
 def infer():
     requests = get_requests()
+    print("Launching. Requests are:")
+    for request in requests:
+        print(request)
 
     # Some asserts to make sure things don't go haywire
     batch_size = requests[0].batch_size
@@ -218,7 +221,7 @@ def infer():
 
     # Start threads
     start_time = time.time()
-    job_args = zip(itertools.repeat(runners), subvols)
+    job_args = ((runner, sv) for runner in runners for sv in subvols)
     dts = []
     with ThreadPool(concurrent_requests) as pool:
         for dt in pool.imap_unordered(_thread_main, job_args):
@@ -258,6 +261,7 @@ def infer():
 
 def launch_slurm_jobs():
     # build an srun command for each rank
+    print("Launching slurm jobs for infreqs", FLAGS.inference_requests)
     argvs = [
         [
             "srun",
