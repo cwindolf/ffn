@@ -13,7 +13,7 @@ from secgan.util.fakepool import FakePool
 # ---------------------------------------------------------------------
 # Flags
 
-from training import secgan_flags  # noqa: W0611
+from secgan.training import secgan_flags  # noqa: W0611
 
 # Data parallel training options.
 # See also some of the training infra options above.

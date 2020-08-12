@@ -4,7 +4,7 @@ import subprocess
 from absl import flags
 from absl import app
 from ffn.training import optimizer  # noqa: W0611
-from training import secgan_flags  # noqa: W0611
+from secgan.training import secgan_flags  # noqa: W0611
 import logging
 
 
