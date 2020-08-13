@@ -100,7 +100,6 @@ def main():
         ]
     else:
         names = args.names
-    assert len(specs) > 0
 
     # open ng server and add data -------------------------------------
     viewer = ng.Viewer()
