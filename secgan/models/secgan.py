@@ -3,7 +3,7 @@ import numpy as np
 import tensorflow as tf
 from secgan.models import convstacktools
 from secgan.models import discriminators
-from secgan.models import convstack_generator
+from secgan.models.convstack_3d_generator import convstack_generator
 from secgan.util import tfx
 from ffn.training.models import convstack_3d
 from ffn.training.optimizer import optimizer_from_flags
@@ -280,9 +280,10 @@ class SECGAN:
         # Generator ops -----------------------------------------------
         # generator G makes fake unlabeled data
         with tf.variable_scope('generator_G') as scope:
-            self.generated_unlabeled = convstack_generator(
-                self.input_labeled, norm=self.gnorm, depth=self.gdepth
-            )
+            self.generated_unlabeled = self.gen(self.input_labeled)
+            # self.generated_unlabeled = convstack_generator(
+            #     self.input_labeled, norm=self.gnorm, depth=self.gdepth
+            # )
             gen_unlabeled_smol = tfx.center_crop_vol(
                 self.generated_unlabeled,
                 (self.generator_conv_clip * self.gdepth) // 2,

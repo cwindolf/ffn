@@ -6,7 +6,7 @@ import tensorflow as tf
 from absl import app
 from absl import flags
 from secgan.training import inputs
-from secgan.models import SECGAN
+from secgan.models.secgan import SECGAN
 from secgan.util.fakepool import FakePool
 
 
