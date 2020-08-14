@@ -5,17 +5,11 @@ from multiprocessing.pool import ThreadPool
 import os
 
 import tqdm
+import numpy as np
 
 import ffn.utils.datspec as dx
-# pip install -e . in neuroglancer/python/
+# `python setup.py install` in neuroglancer/python/
 import neuroglancer as ng
-
-
-# Shader for normalizing [-1, 1] data to [0, 1], which NG prefers
-centered_shader = '''void main() {
-  emitGrayscale(toNormalized((getDataValue() + 1.0) / 2.0));
-}
-'''
 
 
 def extract_ints(string, matches=-1):
@@ -113,18 +107,15 @@ def main():
 
     # Load and normalize raw data for display. ng is happier with [0,1]
     print("Loading raw data...")
-    raw = dx.loadspec(args.raw)
-    if raw.dtype.kind == 'f':
-        if 'gppx' not in args.raw:
-            raw -= raw.min()
-            raw /= raw.max()
+    raw = dx.loadspec(args.raw).astype(np.float32)
+    raw -= raw.min()
+    raw /= raw.max()
 
     with viewer.txn() as v:
         v.layers['raw'] = ng.ImageLayer(
             source=ng.LocalVolume(
                 data=raw, dimensions=dimensions
             ),
-            shader=centered_shader,
         )
         v.layers['raw'].visible = False
 
@@ -142,9 +133,11 @@ def main():
                 # Of course this should be behind a flag if another use
                 # case other than checkpoint selection shows up.
                 name = names[i]
-
                 v.layers[name] = ng.SegmentationLayer(
-                    source=ng.LocalVolume(data=volume, dimensions=dimensions)
+                    source=ng.LocalVolume(
+                        data=volume.astype(np.uint64),
+                        dimensions=dimensions,
+                    )
                 )
                 # Start with segs hidden so that you don't
                 # have to hide them all yourself.
