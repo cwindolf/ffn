@@ -19,7 +19,7 @@ from ffn.utils import bounding_box_pb2
 from ffn.inference import storage
 
 # ffn/ffn/util/sinference.py
-ffn_root = Path(__file__).parent().parent().parent()
+ffn_root = Path(__file__).parent.parent.parent
 
 
 # -- constants
