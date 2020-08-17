@@ -274,7 +274,7 @@ def main(argv):
     module_dict = FLAGS.flags_by_module_dict()
     train_flags = [
         f.serialize()
-        for f in module_dict['training.secgan_flags']
+        for f in module_dict['secgan.training.secgan_flags']
         if f.present
     ]
     optimizer_flags = [
