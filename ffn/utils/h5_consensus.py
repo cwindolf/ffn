@@ -110,6 +110,7 @@ def hdf5_meet_consensus(
         os.path.isdir(segdir) for segdir in segmentation_dirs
     ), "All segmentation directories should exist..."
     assert not os.path.exists(out_fn), f"{out_fn} already exists."
+    assert all(subvols.check_finished(segdir) for segdir in segmentation_dirs)
 
     # -- get subvolume structure
     subvolumes = subvols.check_same_subvolumes(segmentation_dirs)

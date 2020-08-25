@@ -50,11 +50,20 @@ def check_same_subvolumes(segdirs, return_bool=False):
     same subvolume structure rather than returning the subvolumes
     and raising if not.
     """
+    sds = ", ".join(segdirs)
+    logging.info(
+        "Now determining the subvolume structure of the inferences "
+        f"in {sds}, and checking that they are the same."
+        "Lots of messages about 'loading segmentation' will appear."
+    )
+
+    # we parallelize over segdirs, so we have 1 thread determining
+    # each segmentation's structure
     with multiprocessing.pool.ThreadPool() as pool:
         allsvs_ = list(pool.map(get_subvolumes, segdirs))
     allsvs = allsvs_[0]
 
-    # Check all the same
+    # check all returned structures are the same
     for svs in allsvs_[1:]:
         same = all(a == b for a, b in zip(allsvs, svs))
 
@@ -82,6 +91,8 @@ def check_finished(segdir):
     aren't any with just a .cpoint, and that the segmentation
     at least has some subvolume.
     """
+    logging.info(f"Checking whether segmentation {segdir} is complete")
+
     if not glob.glob(join(segdir, "*/*")):
         return False
 
@@ -93,8 +104,10 @@ def check_finished(segdir):
             assert cpoint.endswith(".cpoint")
             npz = cpoint[:-len(".cpoint")] + ".npz"
             if not exists(npz):
+                logging.info(f"Segmentation {segdir} is NOT complete.")
                 return False
 
+    logging.info(f"Segmentation {segdir} is complete!")
     return True
 
 
@@ -129,6 +142,8 @@ def subvolume_tiers(subvolumes):
     -------
     tiers : list of list of BoundingBox
     """
+    logging.info("Determining parallelism tiers for subvolume structure.")
+
     tiers = []
     unused_indices = list(range(len(subvolumes)))
     while unused_indices:

@@ -68,6 +68,7 @@ args = ap.parse_args()
 
 # -- run it
 
+# regular, non-transposed consensus
 if not args.transpose:
     h5_consensus.hdf5_meet_consensus(
         args.output,
@@ -75,6 +76,8 @@ if not args.transpose:
         dset=args.dset,
         min_ffn_size=args.min_ffn_size,
     )
+
+# transposed version needs more processing of arguments
 else:
     # make directory if necessary
     if not exists(args.output):
