@@ -44,14 +44,14 @@ def _h5_consensus_thread_main(subvolume):
     # ID space on its own, it's the only place where enough info is present
     logging.info(f"Merging with main at {subvolume.start}")
     merge, sv_max_id, sv_old_max_id, new_mask = meet_consensus.paste_new_seg(
-        consensus_data[subvol_slice], meet_result
+        consensus_data[subvol_slice], meet_result, min_size=_h5_consensus_thread_main.min_out_size
     )
 
     return merge, sv_max_id, sv_old_max_id, new_mask, subvol_slice
 
 
 def _h5_consensus_thread_initializer(
-    out_fn, dset, segmentation_dirs, min_ffn_size
+    out_fn, dset, segmentation_dirs, min_ffn_size, min_out_size
 ):
     """Initializer for h5 consensus threads.
 
@@ -66,6 +66,7 @@ def _h5_consensus_thread_initializer(
     # store parameters
     _h5_consensus_thread_main.segmentation_dirs = segmentation_dirs
     _h5_consensus_thread_main.min_ffn_size = min_ffn_size
+    _h5_consensus_thread_main.min_out_size = min_out_size
 
     # store read-only data reference for use in SWMR scheme
     seg_outf = h5py.File(out_fn, "r", libver="latest", swmr=True)
@@ -74,8 +75,14 @@ def _h5_consensus_thread_initializer(
 
 # -- HDF5 consensus main thread
 
+
 def hdf5_meet_consensus(
-    out_fn, segmentation_dirs, dset="seg", min_ffn_size=0, chunksize=64
+    out_fn,
+    segmentation_dirs,
+    dset="seg",
+    min_ffn_size=0,
+    keep_larger_than=0,
+    chunksize=64,
 ):
     """Merge overlapping subvolumes into a single segmentation
 
@@ -98,6 +105,8 @@ def hdf5_meet_consensus(
     min_ffn_size : int, optional
         The minimum size neurite to allow when loading subvolumes
         from disk.
+    keep_larger_than : int, optional
+        Clears "dust" smaller than this.
     chunksize : int, optional
         Size of chunks in the hdf5 file. 64 should be fine.
     """
@@ -126,9 +135,7 @@ def hdf5_meet_consensus(
 
     # this is the only writeable reference to our output file
     # h5 needs libver latest to use single writer/multiple reader
-    with h5py.File(
-        out_fn, "w", libver="latest", swmr=True
-    ) as seg_outf:
+    with h5py.File(out_fn, "w", libver="latest", swmr=True) as seg_outf:
         # -- set up data
         # note the fillvalue=0 to initialize seg to all background
         seg_out = seg_outf.create_dataset(
@@ -147,7 +154,7 @@ def hdf5_meet_consensus(
         with multiprocessing.pool.ThreadPool(
             nthreads,
             initializer=_h5_consensus_thread_initializer,
-            initargs=(out_fn, dset, segmentation_dirs, min_ffn_size),
+            initargs=(out_fn, dset, segmentation_dirs, min_ffn_size, keep_larger_than),
         ) as pool:
             # serial over tiers
             for tier_num, tier in enumerate(tiers, start=1):
@@ -155,7 +162,11 @@ def hdf5_meet_consensus(
 
                 # parallel within tiers
                 for (
-                    merge, sv_max_id, sv_old_max_id, new_mask, subvol_slice
+                    merge,
+                    sv_max_id,
+                    sv_old_max_id,
+                    new_mask,
+                    subvol_slice,
                 ) in pool.imap_unordered(_h5_consensus_thread_main, tier):
                     # -- contiguous ID space logic
                     # done on the main thread since it's hard to parallelize

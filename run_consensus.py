@@ -51,6 +51,12 @@ ap.add_argument(
     help="Minimum size segment to allow when loading inferences.",
 )
 ap.add_argument(
+    "--min-out-size",
+    type=int,
+    default=0,
+    help="Minimum size segment to keep after consensus.",
+)
+ap.add_argument(
     "--transpose",
     action="store_true",
     help="This flag 'transposes' the 'axes' of the consensus. If set, "
@@ -75,6 +81,7 @@ if not args.transpose:
         args.segmentation_dirs,
         dset=args.dset,
         min_ffn_size=args.min_ffn_size,
+        keep_larger_than=args.min_out_size,
     )
 
 # transposed version needs more processing of arguments

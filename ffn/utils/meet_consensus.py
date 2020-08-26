@@ -174,7 +174,7 @@ def seg_meet(a, b, min_new_id=1):
 
 # -- asymmetric merge, not in-place
 
-def paste_new_seg(a, b, old_max_id=0):
+def paste_new_seg(a, b, old_max_id=0, min_size=0):
     """Paste `b` into the background of `a`
 
     Merge keeps `a` fixed, and inserts segments from `b` into the
@@ -227,6 +227,10 @@ def paste_new_seg(a, b, old_max_id=0):
     merged = np.zeros(a.shape, dtype=np.uint32)
     merged[a_fg] = a[a_fg].astype(np.uint32)
     new_max_id = merge_from_min_id(merged, b, b_not_a, min_new_id)
+
+    # clear dust
+    if min_size > 0:
+        segmentation.clear_dust(merged, min_size=min_size)
 
     return merged, new_max_id, old_max_id, b_not_a
 
